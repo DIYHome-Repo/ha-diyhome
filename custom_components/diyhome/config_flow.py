@@ -74,3 +74,7 @@ class DiyHomeOAuth2FlowHandler(
             OAUTH2_TOKEN,
         )
         return await self.async_step_auth()
+
+    async def async_oauth_create_entry(self, data: dict) -> dict:
+        """Sovrascrive il titolo entry da 'Local application credentials' a 'DiyHome Cloud'."""
+        return self.async_create_entry(title="DiyHome Cloud", data=data)
