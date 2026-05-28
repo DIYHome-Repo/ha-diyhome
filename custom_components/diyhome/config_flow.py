@@ -3,22 +3,28 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.application_credentials import (
-    async_import_client_credential,
-    ClientCredential,
+from homeassistant.helpers.config_entry_oauth2_flow import (
+    AbstractOAuth2FlowHandler,
+    LocalOAuth2Implementation,
+    async_register_implementation,
 )
-from homeassistant.helpers import config_entry_oauth2_flow
 
-from .const import DOMAIN, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET
+from .const import DOMAIN, OAUTH2_AUTHORIZE, OAUTH2_TOKEN, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class DiyHomeOAuth2FlowHandler(
-    config_entry_oauth2_flow.AbstractOAuth2FlowHandler,
+    AbstractOAuth2FlowHandler,
     domain=DOMAIN,
 ):
-    """Handle DiyHome OAuth2 authorization flow."""
+    """DiyHome OAuth2 config flow.
+
+    Registers a LocalOAuth2Implementation directly before the super()
+    call so HA never shows the 'add credentials' form.  This works
+    for HACS custom components where async_get_application_credentials
+    is not scanned at startup like built-in integrations.
+    """
 
     DOMAIN = DOMAIN
 
@@ -27,23 +33,18 @@ class DiyHomeOAuth2FlowHandler(
         return _LOGGER
 
     async def async_step_user(self, user_input=None):
-        """Import built-in credentials and start OAuth flow.
-
-        async_import_client_credential stores the credential in HA's
-        application_credentials storage so the credential form is skipped.
-        """
-        try:
-            await async_import_client_credential(
+        """Register built-in OAuth2 implementation and start flow."""
+        await async_register_implementation(
+            self.hass,
+            LocalOAuth2Implementation(
                 self.hass,
                 DOMAIN,
-                ClientCredential(
-                    client_id=OAUTH2_CLIENT_ID,
-                    client_secret=OAUTH2_CLIENT_SECRET,
-                    name="DiyHome Cloud",
-                ),
-            )
-        except Exception as err:
-            _LOGGER.debug("Credential pre-import: %s", err)
+                OAUTH2_CLIENT_ID,
+                OAUTH2_CLIENT_SECRET,
+                OAUTH2_AUTHORIZE,
+                OAUTH2_TOKEN,
+            ),
+        )
         return await super().async_step_user(user_input)
 
     async def async_step_reauth(self, entry_data):
