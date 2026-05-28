@@ -1,7 +1,7 @@
 {
   "domain": "diyhome",
   "name": "DiyHome",
-  "version": "1.4.8",
+  "version": "1.4.10",
   "documentation": "https://diyhome.cloud/docs/integrations/home-assistant",
   "issue_tracker": "https://github.com/DIYHome-Repo/ha-diyhome/issues",
   "codeowners": ["@DIYHome-Repo"],
