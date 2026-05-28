@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.helpers.config_entry_oauth2_flow import (
     AbstractOAuth2FlowHandler,
@@ -20,39 +21,52 @@ class DiyHomeOAuth2FlowHandler(
 ):
     """DiyHome OAuth2 config flow.
 
-    async_register_implementation is a @callback (synchronous) function.
-    Do NOT await it — calling it directly registers the implementation in
-    hass.data before super().async_step_user() checks for implementations.
+    Registra LocalOAuth2Implementation direttamente in async_step_user
+    (approccio HACS-safe, senza dipendenza application_credentials).
+    VERSION = 1 è richiesto esplicitamente da HA 2024.x.
     """
 
     DOMAIN = DOMAIN
+    VERSION = 1
 
     @property
     def logger(self) -> logging.Logger:
         return _LOGGER
 
-    async def async_step_user(self, user_input=None):
-        """Register built-in OAuth2 implementation and start flow."""
-        # async_register_implementation is @callback (sync) — no await
-        async_register_implementation(
-            self.hass,
-            LocalOAuth2Implementation(
-                self.hass,
-                DOMAIN,
-                OAUTH2_CLIENT_ID,
-                OAUTH2_CLIENT_SECRET,
-                OAUTH2_AUTHORIZE,
-                OAUTH2_TOKEN,
-            ),
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Registra implementazione OAuth2 e avvia il flow."""
+        # Registra solo se non è già presente (evita duplicati su re-entry)
+        from homeassistant.helpers.config_entry_oauth2_flow import (
+            async_get_implementations,
         )
-        return await super().async_step_user(user_input)
+        implementations = await async_get_implementations(self.hass, DOMAIN)
+        if not implementations:
+            # async_register_implementation è @callback (sincrona) — NO await
+            async_register_implementation(
+                self.hass,
+                LocalOAuth2Implementation(
+                    self.hass,
+                    DOMAIN,
+                    OAUTH2_CLIENT_ID,
+                    OAUTH2_CLIENT_SECRET,
+                    OAUTH2_AUTHORIZE,
+                    OAUTH2_TOKEN,
+                ),
+            )
+        # Chiama direttamente async_step_pick_implementation
+        # (più sicuro di super().async_step_user() che varia tra versioni HA)
+        return await self.async_step_pick_implementation(user_input)
 
-    async def async_step_reauth(self, entry_data):
-        """Re-authenticate with DiyHome."""
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> dict[str, Any]:
+        """Re-autentica con DiyHome."""
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input=None):
-        """Confirm re-authentication."""
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Conferma re-autenticazione."""
         if user_input is None:
             return self.async_show_form(step_id="reauth_confirm")
         return await self.async_step_user()
