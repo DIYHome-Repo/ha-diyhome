@@ -10,11 +10,32 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN, PLATFORMS, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET, OAUTH2_AUTHORIZE, OAUTH2_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=30)
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Register the OAuth2 implementation at component load time.
+
+    This ensures HA finds the implementation before the config flow starts,
+    avoiding the 'missing_configuration' error.
+    """
+    await config_entry_oauth2_flow.async_register_implementation(
+        hass,
+        DOMAIN,
+        config_entry_oauth2_flow.LocalOAuth2Implementation(
+            hass,
+            DOMAIN,
+            OAUTH2_CLIENT_ID,
+            OAUTH2_CLIENT_SECRET,
+            OAUTH2_AUTHORIZE,
+            OAUTH2_TOKEN,
+        ),
+    )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
