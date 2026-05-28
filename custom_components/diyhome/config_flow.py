@@ -43,9 +43,11 @@ class DiyHomeOAuth2FlowHandler(
         )
         implementations = await async_get_implementations(self.hass, DOMAIN)
         if not implementations:
-            # async_register_implementation è @callback (sincrona) — NO await
+            # HA 2025.x: async_register_implementation(hass, domain, implementation)
+            # Il DOMAIN è ora argomento separato (breaking change vs HA 2024.x)
             async_register_implementation(
                 self.hass,
+                DOMAIN,
                 LocalOAuth2Implementation(
                     self.hass,
                     DOMAIN,

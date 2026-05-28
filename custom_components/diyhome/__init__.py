@@ -24,8 +24,10 @@ SCAN_INTERVAL = timedelta(seconds=30)
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Register OAuth2 implementation at component load time."""
     hass.data.setdefault(DOMAIN, {})
+    # HA 2025.x: async_register_implementation(hass, domain, implementation)
     async_register_implementation(
         hass,
+        DOMAIN,
         LocalOAuth2Implementation(
             hass,
             DOMAIN,
