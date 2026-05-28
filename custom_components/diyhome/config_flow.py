@@ -4,12 +4,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.helpers.config_entry_oauth2_flow import (
-    AbstractOAuth2FlowHandler,
-    LocalOAuth2Implementation,
-)
+from homeassistant.helpers.config_entry_oauth2_flow import AbstractOAuth2FlowHandler
 
-from .const import DOMAIN, OAUTH2_AUTHORIZE, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET, OAUTH2_TOKEN
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,8 +17,10 @@ class DiyHomeOAuth2FlowHandler(
 ):
     """Config flow DiyHome.
 
-    Imposta flow_impl direttamente con LocalOAuth2Implementation — bypassa
-    async_step_pick_implementation e la dialog 'Aggiungi credenziali applicazione'.
+    L'implementazione OAuth2 (LocalOAuth2Implementation) viene registrata
+    in async_setup() di __init__.py tramite async_register_implementation().
+    Con una sola implementazione registrata, async_step_pick_implementation()
+    la seleziona automaticamente senza mostrare alcuna dialog all'utente.
     """
 
     DOMAIN = DOMAIN
@@ -34,13 +33,5 @@ class DiyHomeOAuth2FlowHandler(
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Imposta l'implementazione OAuth2 direttamente e avvia il redirect."""
-        self.flow_impl = LocalOAuth2Implementation(
-            self.hass,
-            DOMAIN,
-            OAUTH2_CLIENT_ID,
-            OAUTH2_CLIENT_SECRET,
-            OAUTH2_AUTHORIZE,
-            OAUTH2_TOKEN,
-        )
-        return await self.async_step_auth()
+        """Avvia il flusso OAuth2 selezionando l'implementazione registrata."""
+        return await self.async_step_pick_implementation(user_input)

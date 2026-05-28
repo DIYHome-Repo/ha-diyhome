@@ -8,11 +8,18 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_entry_oauth2_flow
-from homeassistant.helpers.config_entry_oauth2_flow import ImplementationUnavailableError
+from homeassistant.helpers.config_entry_oauth2_flow import LocalOAuth2Implementation
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+# ImplementationUnavailableError è stata aggiunta in HA 2025.12
+# Fallback a Exception generica per compatibilità con versioni precedenti
+try:
+    from homeassistant.helpers.config_entry_oauth2_flow import ImplementationUnavailableError
+except ImportError:
+    ImplementationUnavailableError = Exception  # type: ignore[assignment,misc]
+
 from .api import DiyHomeApiClient
-from .const import DOMAIN, PLATFORMS
+from .const import CLOUD_URL, DOMAIN, OAUTH2_AUTHORIZE, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET, OAUTH2_TOKEN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,8 +27,22 @@ SCAN_INTERVAL = timedelta(seconds=30)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up DiyHome."""
+    """Registra l'implementazione OAuth2 nel registry globale di HA."""
     hass.data.setdefault(DOMAIN, {})
+
+    config_entry_oauth2_flow.async_register_implementation(
+        hass,
+        DOMAIN,
+        LocalOAuth2Implementation(
+            hass,
+            DOMAIN,
+            OAUTH2_CLIENT_ID,
+            OAUTH2_CLIENT_SECRET,
+            OAUTH2_AUTHORIZE,
+            OAUTH2_TOKEN,
+        ),
+    )
+
     return True
 
 
@@ -32,10 +53,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass, entry
         )
     except ImplementationUnavailableError as err:
-        raise ConfigEntryNotReady("DiyHome OAuth2 temporaneamente non disponibile") from err
+        raise ConfigEntryNotReady("DiyHome OAuth2 non disponibile — riprova tra qualche secondo") from err
 
     session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
-
     client = DiyHomeApiClient(session)
 
     coordinator = DiyHomeCoordinator(hass, client)
@@ -59,7 +79,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 class DiyHomeCoordinator(DataUpdateCoordinator):
-    """Coordinator that fetches all device data every SCAN_INTERVAL."""
+    """Coordinator che aggiorna i dati device ogni SCAN_INTERVAL."""
 
     def __init__(self, hass: HomeAssistant, client: DiyHomeApiClient) -> None:
         super().__init__(
