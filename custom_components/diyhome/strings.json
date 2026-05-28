@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "pick_implementation": {
+        "title": "Connetti DiyHome",
+        "description": "Clicca **Invia** per accedere con il tuo account DiyHome."
+      },
+      "reauth_confirm": {
+        "title": "Ri-autentica DiyHome",
+        "description": "La sessione è scaduta. Accedi di nuovo."
+      }
+    },
+    "abort": {
+      "already_configured": "DiyHome è già configurato.",
+      "oauth_error": "Autorizzazione OAuth2 fallita.",
+      "oauth_unauthorized": "Autorizzazione negata.",
+      "oauth_timeout": "Autorizzazione scaduta.",
+      "oauth_failed": "Impossibile connettersi a DiyHome."
+    },
+    "create_entry": {
+      "default": "DiyHome connesso con successo."
+    }
+  }
+}

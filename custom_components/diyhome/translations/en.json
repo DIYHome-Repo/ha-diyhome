@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "pick_implementation": {
+        "title": "Connect DiyHome",
+        "description": "Click **Submit** to log in with your DiyHome account. Your browser will open the DiyHome authorization page."
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate DiyHome",
+        "description": "Your DiyHome session has expired. Click **Submit** to log in again."
+      }
+    },
+    "abort": {
+      "already_configured": "DiyHome is already configured.",
+      "oauth_error": "OAuth2 authorization failed.",
+      "oauth_unauthorized": "Authorization denied.",
+      "oauth_timeout": "Authorization timed out.",
+      "oauth_failed": "Could not connect to DiyHome."
+    },
+    "create_entry": {
+      "default": "Successfully connected to DiyHome."
+    }
+  }
+}
