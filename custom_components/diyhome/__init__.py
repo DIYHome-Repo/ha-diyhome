@@ -96,6 +96,23 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         try:
+            # ── Diagnostica whoami (una sola volta al primo avvio) ────────────
+            if not getattr(self, "_whoami_logged", False):
+                try:
+                    whoami = await self.client.whoami()
+                    _LOGGER.warning(
+                        "DiyHome WHOAMI → userId=%s email=%s allDevices=%s",
+                        whoami.get("userId"),
+                        whoami.get("email"),
+                        [
+                            f"{d.get('name')}(uid={d.get('device_uid')},claimed={d.get('claimed_at')},rma={d.get('rma_at')},ok={d.get('visibileInHA')})"
+                            for d in whoami.get("allDevices", [])
+                        ],
+                    )
+                except Exception as we:
+                    _LOGGER.warning("DiyHome WHOAMI errore: %s", we)
+                self._whoami_logged = True
+
             data = await self.client.get_devices()
             devices = data.get("devices", [])
             uids = [d.get("uid") for d in devices if d.get("uid")]

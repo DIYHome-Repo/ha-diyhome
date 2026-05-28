@@ -24,6 +24,10 @@ class DiyHomeApiClient:
         resp.raise_for_status()
         return await resp.json()
 
+    async def whoami(self) -> dict:
+        """Diagnostica: restituisce userId, email e tutti i device (senza filtri)."""
+        return await self._get("/whoami")
+
     async def get_devices(self) -> dict:
         """Return list of devices with full state (valves, zones, tank, flow, consumption)."""
         return await self._get("/devices")
