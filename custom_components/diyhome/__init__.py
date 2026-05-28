@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import timedelta
 
 from aiohttp import ClientResponseError
@@ -112,31 +113,60 @@ async def _listen_sse(
     viene eseguita (su MQTT telemetry, comando HA, ecc.).
     Alla ricezione di "device_update", il coordinator si aggiorna immediatamente
     invece di aspettare il poll a 30s.
+
+    Debounce lato client: max 1 async_request_refresh() per uid per 1s.
+    Il backend fa già debounce 300ms sui push SSE, ma questo secondo livello
+    protegge da burst multipli di telemetria che arrivano comunque in rapida
+    successione (es. valve ACK + shadow + stato).
     """
     stream_url = f"{CLOUD_URL}/api/ha/stream"
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
+
+    # Debounce: mappa uid → timestamp ultimo refresh (epoch float)
+    _last_refresh: dict[str, float] = {}
+    _MIN_REFRESH_INTERVAL = 1.0  # secondi
 
     while True:
         try:
             resp = await session.async_request("GET", stream_url)
             _LOGGER.debug("DiyHome SSE: connesso (HTTP %s)", resp.status)
 
+            current_event: str | None = None
+
             async for raw_line in resp.content:
                 line = raw_line.decode("utf-8").strip()
 
                 if not line or line.startswith(":"):
-                    # Heartbeat ping o riga vuota — ignora
+                    # Heartbeat ping o riga vuota — reset event corrente
+                    current_event = None
                     continue
 
-                if line.startswith("data:"):
+                if line.startswith("event:"):
+                    current_event = line[6:].strip()
+                    continue
+
+                if line.startswith("data:") and current_event == "device_update":
                     try:
                         payload = json.loads(line[5:].strip())
                         uid = payload.get("uid")
                         if uid:
-                            _LOGGER.debug("DiyHome SSE: device_update uid=%s → refresh", uid)
-                            await coordinator.async_request_refresh()
+                            now = time.monotonic()
+                            last = _last_refresh.get(uid, 0.0)
+                            if now - last >= _MIN_REFRESH_INTERVAL:
+                                _last_refresh[uid] = now
+                                _LOGGER.debug(
+                                    "DiyHome SSE: device_update uid=%s → refresh", uid
+                                )
+                                await coordinator.async_request_refresh()
+                            else:
+                                _LOGGER.debug(
+                                    "DiyHome SSE: device_update uid=%s → debounced (%.2fs fa)",
+                                    uid,
+                                    now - last,
+                                )
                     except (json.JSONDecodeError, Exception):
                         pass
+                    current_event = None
 
         except asyncio.CancelledError:
             _LOGGER.debug("DiyHome SSE: task cancellato")
