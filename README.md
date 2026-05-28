@@ -1,11 +1,11 @@
-# DiyHome — Home Assistant Integration
+# DIYHome — Home Assistant Integration
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/DIYHome-Repo/ha-diyhome/main/icon.png" alt="DiyHome" width="120" />
 </p>
 
 <p align="center">
-  <strong>Controllo nativo dei dispositivi DiyHome direttamente da Home Assistant</strong>
+  <strong>Controllo nativo dei dispositivi DIYHome direttamente da Home Assistant</strong>
 </p>
 
 <p align="center">
@@ -16,9 +16,9 @@
 
 ---
 
-## Cos'è DiyHome?
+## Cos'è DIYHome?
 
-**DiyHome** è una piattaforma IoT cloud-first per la gestione smart dell'irrigazione e dei sensori idrici. I dispositivi DiyHome si connettono al cloud tramite MQTT sicuro e ora possono essere controllati direttamente da Home Assistant.
+**DIYHome** è una piattaforma IoT cloud-first per la gestione smart dell'irrigazione e dei sensori idrici. I dispositivi DIYHome si connettono al cloud tramite MQTT sicuro e ora possono essere controllati direttamente da Home Assistant.
 
 Con questa integrazione puoi:
 - Controllare valvole di irrigazione come switch in HA
