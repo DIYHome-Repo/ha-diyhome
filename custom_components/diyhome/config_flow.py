@@ -20,10 +20,9 @@ class DiyHomeOAuth2FlowHandler(
 ):
     """DiyHome OAuth2 config flow.
 
-    Registers a LocalOAuth2Implementation directly before the super()
-    call so HA never shows the 'add credentials' form.  This works
-    for HACS custom components where async_get_application_credentials
-    is not scanned at startup like built-in integrations.
+    async_register_implementation is a @callback (synchronous) function.
+    Do NOT await it — calling it directly registers the implementation in
+    hass.data before super().async_step_user() checks for implementations.
     """
 
     DOMAIN = DOMAIN
@@ -34,7 +33,8 @@ class DiyHomeOAuth2FlowHandler(
 
     async def async_step_user(self, user_input=None):
         """Register built-in OAuth2 implementation and start flow."""
-        await async_register_implementation(
+        # async_register_implementation is @callback (sync) — no await
+        async_register_implementation(
             self.hass,
             LocalOAuth2Implementation(
                 self.hass,
