@@ -7,18 +7,10 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow
-from homeassistant.helpers.config_entry_oauth2_flow import LocalOAuth2Implementation
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
-from .const import (
-    DOMAIN,
-    OAUTH2_AUTHORIZE,
-    OAUTH2_CLIENT_ID,
-    OAUTH2_CLIENT_SECRET,
-    OAUTH2_TOKEN,
-    PLATFORMS,
-)
+from .const import DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,20 +18,8 @@ SCAN_INTERVAL = timedelta(seconds=30)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Registra l'implementazione OAuth2 — nessuna dialog credenziali."""
+    """Set up DiyHome."""
     hass.data.setdefault(DOMAIN, {})
-    config_entry_oauth2_flow.async_register_implementation(
-        hass,
-        DOMAIN,
-        LocalOAuth2Implementation(
-            hass,
-            DOMAIN,
-            OAUTH2_CLIENT_ID,
-            OAUTH2_CLIENT_SECRET,
-            OAUTH2_AUTHORIZE,
-            OAUTH2_TOKEN,
-        ),
-    )
     return True
 
 
