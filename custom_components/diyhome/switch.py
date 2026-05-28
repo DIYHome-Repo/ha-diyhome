@@ -1,4 +1,4 @@
-"""Switch platform — valvola 1 e valvola 2."""
+"""Switch platform — valvola principale, valvola 2, zone irrigazione."""
 from __future__ import annotations
 
 import logging
@@ -23,18 +23,24 @@ async def async_setup_entry(
     coordinator: DiyHomeCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     client = hass.data[DOMAIN][entry.entry_id]["client"]
 
-    entities = []
+    entities: list[SwitchEntity] = []
     for uid, device in coordinator.data.items():
-        if device.get("valve1") is not None:
-            entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=1))
+        # Valvola principale (sempre presente se il device è claimato)
+        entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=1))
+        # Valvola 2 (opzionale — presente solo se configurata)
         if device.get("valve2") is not None:
             entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=2))
+        # Zone irrigazione
+        for zone in device.get("zones", []):
+            entities.append(DiyHomeZoneSwitch(coordinator, client, uid, zone["index"], zone["name"]))
 
     async_add_entities(entities)
 
 
+# ── Valvola principale / secondaria ──────────────────────────────────────────
+
 class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
-    """Represents a DiyHome valve as a HA switch."""
+    """Rappresenta una valvola DiyHome come switch HA."""
 
     def __init__(self, coordinator, client, uid: str, valve: int) -> None:
         super().__init__(coordinator, uid)
@@ -51,8 +57,7 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        data = self._device_data
-        valve_data = data.get(f"valve{self._valve}")
+        valve_data = self._device_data.get(f"valve{self._valve}")
         if valve_data is None:
             return None
         return valve_data.get("is_open", False)
@@ -69,4 +74,55 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs) -> None:
         action = f"valve{self._valve}_close" if self._valve == 2 else "valve_close"
         await self._client.send_command(self._uid, action)
+        await self.coordinator.async_request_refresh()
+
+
+# ── Zone irrigazione ──────────────────────────────────────────────────────────
+
+class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
+    """Rappresenta una zona irrigazione DiyHome come switch HA."""
+
+    def __init__(self, coordinator, client, uid: str, zone_index: int, zone_name: str) -> None:
+        super().__init__(coordinator, uid)
+        self._client = client
+        self._zone_index = zone_index
+        self._zone_name = zone_name
+        self._attr_unique_id = f"{uid}_zone_{zone_index}"
+        self._attr_icon = "mdi:sprinkler-variant"
+
+    @property
+    def name(self) -> str:
+        zone = self._get_zone()
+        return zone.get("name") or self._zone_name or f"Zona {self._zone_index + 1}"
+
+    def _get_zone(self) -> dict:
+        for z in self._device_data.get("zones", []):
+            if z.get("index") == self._zone_index:
+                return z
+        return {}
+
+    @property
+    def is_on(self) -> bool:
+        return self._get_zone().get("is_active", False)
+
+    @property
+    def available(self) -> bool:
+        return self._device_data.get("online", False)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        zone = self._get_zone()
+        attrs: dict = {"zone_index": self._zone_index, "zone_type": zone.get("type", "sprinkler")}
+        if zone.get("minutes_remaining") is not None:
+            attrs["minutes_remaining"] = zone["minutes_remaining"]
+        if zone.get("opened_at"):
+            attrs["opened_at"] = zone["opened_at"]
+        return attrs
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._client.send_zone_command(self._uid, self._zone_index, True)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._client.send_zone_command(self._uid, self._zone_index, False)
         await self.coordinator.async_request_refresh()

@@ -25,7 +25,7 @@ class DiyHomeApiClient:
         return await resp.json()
 
     async def get_devices(self) -> dict:
-        """Return list of devices with current state."""
+        """Return list of devices with full state (valves, zones, tank, flow, consumption)."""
         return await self._get("/devices")
 
     async def get_device_state(self, uid: str) -> dict:
@@ -33,5 +33,13 @@ class DiyHomeApiClient:
         return await self._get(f"/devices/{uid}/state")
 
     async def send_command(self, uid: str, action: str) -> dict:
-        """Send a command to a device (e.g. valve_open, valve_close)."""
+        """Send a valve command (valve_open, valve_close, valve2_open, valve2_close)."""
         return await self._post(f"/devices/{uid}/command", {"action": action})
+
+    async def send_zone_command(self, uid: str, zone_index: int, is_open: bool) -> dict:
+        """Open or close an irrigation zone."""
+        action = "zone_open" if is_open else "zone_close"
+        return await self._post(f"/devices/{uid}/command", {
+            "action": action,
+            "zone_index": zone_index,
+        })

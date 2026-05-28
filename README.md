@@ -18,7 +18,7 @@
 
 ## Cos'è DiyHome?
 
-**DiyHome** è una piattaforma IoT cloud-first per la gestione smart dell'irrigazione e dei sensori idrici. I dispositivi DiyHome (basati su ESP32-S3) si connettono al cloud tramite MQTT sicuro e ora possono essere controllati direttamente da Home Assistant.
+**DiyHome** è una piattaforma IoT cloud-first per la gestione smart dell'irrigazione e dei sensori idrici. I dispositivi DiyHome si connettono al cloud tramite MQTT sicuro e ora possono essere controllati direttamente da Home Assistant.
 
 Con questa integrazione puoi:
 - Controllare valvole di irrigazione come switch in HA
