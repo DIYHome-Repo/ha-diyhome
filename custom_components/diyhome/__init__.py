@@ -1,6 +1,8 @@
 """DiyHome integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from datetime import timedelta
 
@@ -17,6 +19,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import DiyHomeApiClient
 from .const import (
     DOMAIN,
+    CLOUD_URL,
     OAUTH2_AUTHORIZE,
     OAUTH2_CLIENT_ID,
     OAUTH2_CLIENT_SECRET,
@@ -26,19 +29,15 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Polling di fallback — il coordinator si aggiorna ogni 30s anche senza SSE.
+# Con SSE attivo gli aggiornamenti arrivano in <1s appena il backend riceve MQTT.
 SCAN_INTERVAL = timedelta(seconds=30)
 
 
 def _oauth_implementation(
     hass: HomeAssistant,
 ) -> config_entry_oauth2_flow.LocalOAuth2Implementation:
-    """Crea l'implementazione OAuth2 DiyHome direttamente.
-
-    Costruisce LocalOAuth2Implementation senza passare per il registry globale.
-    Questo evita il 500 'Server got itself in trouble' durante la prima installazione
-    (quando async_setup non è ancora stato chiamato da HA) e funziona correttamente
-    anche ai restart successivi.
-    """
+    """Crea l'implementazione OAuth2 DiyHome direttamente."""
     return DiyHomeLocalOAuth2Implementation(
         hass,
         DOMAIN,
@@ -70,19 +69,88 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # ── SSE listener real-time ─────────────────────────────────────────────────
+    # Task long-running che ascolta /api/ha/stream e triggera coordinator.refresh
+    # istantaneamente al posto di aspettare il poll a 30s.
+    sse_task = hass.async_create_task(
+        _listen_sse(hass, entry, coordinator, session),
+        name=f"diyhome_sse_{entry.entry_id}",
+    )
+    hass.data[DOMAIN][entry.entry_id]["sse_task"] = sse_task
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Cancella il task SSE prima di fare unload
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    sse_task = entry_data.get("sse_task")
+    if sse_task and not sse_task.done():
+        sse_task.cancel()
+        try:
+            await sse_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok
 
 
+async def _listen_sse(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: "DiyHomeCoordinator",
+    session: config_entry_oauth2_flow.OAuth2Session,
+) -> None:
+    """Long-running task SSE: riceve push real-time dal backend DiyHome.
+
+    Il backend chiama haSSEPushDeviceUpdate() ogni volta che publishHaStates()
+    viene eseguita (su MQTT telemetry, comando HA, ecc.).
+    Alla ricezione di "device_update", il coordinator si aggiorna immediatamente
+    invece di aspettare il poll a 30s.
+    """
+    stream_url = f"{CLOUD_URL}/api/ha/stream"
+    _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
+
+    while True:
+        try:
+            resp = await session.async_request("GET", stream_url)
+            _LOGGER.debug("DiyHome SSE: connesso (HTTP %s)", resp.status)
+
+            async for raw_line in resp.content:
+                line = raw_line.decode("utf-8").strip()
+
+                if not line or line.startswith(":"):
+                    # Heartbeat ping o riga vuota — ignora
+                    continue
+
+                if line.startswith("data:"):
+                    try:
+                        payload = json.loads(line[5:].strip())
+                        uid = payload.get("uid")
+                        if uid:
+                            _LOGGER.debug("DiyHome SSE: device_update uid=%s → refresh", uid)
+                            await coordinator.async_request_refresh()
+                    except (json.JSONDecodeError, Exception):
+                        pass
+
+        except asyncio.CancelledError:
+            _LOGGER.debug("DiyHome SSE: task cancellato")
+            return
+        except Exception as err:
+            _LOGGER.debug("DiyHome SSE: errore connessione (%s), retry in 30s", err)
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                return
+
+
 class DiyHomeCoordinator(DataUpdateCoordinator):
-    """Coordinator che aggiorna i dati device ogni SCAN_INTERVAL."""
+    """Coordinator che aggiorna i dati device ogni SCAN_INTERVAL (fallback SSE)."""
 
     def __init__(self, hass: HomeAssistant, client: DiyHomeApiClient) -> None:
         super().__init__(
@@ -116,7 +184,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             data = await self.client.get_devices()
             devices = data.get("devices", [])
             uids = [d.get("uid") for d in devices if d.get("uid")]
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "DiyHome API returned %d device(s): %s",
                 len(devices),
                 uids,
