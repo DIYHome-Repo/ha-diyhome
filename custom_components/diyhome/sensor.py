@@ -1,8 +1,8 @@
-"""Sensor platform — livello cisterna, temperatura, litri."""
+"""Sensor platform — livello cisterna, temperatura, litri, portata, consumo."""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from homeassistant.components.sensor import (
@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfVolume
+from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfVolume, UnitOfVolumeFlowRate
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -25,11 +25,12 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DiyHomeSensorDescription(SensorEntityDescription):
-    value_fn: Callable[[dict], float | None] = lambda d: None
-    available_fn: Callable[[dict], bool] = lambda d: True
+    value_fn: Callable[[dict], float | None] = field(default=lambda d: None)
+    available_fn: Callable[[dict], bool] = field(default=lambda d: True)
 
 
 SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
+    # ── Cisterna ──────────────────────────────────────────────────────────────
     DiyHomeSensorDescription(
         key="tank_level",
         name="Livello cisterna",
@@ -59,6 +60,48 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         icon="mdi:thermometer",
         value_fn=lambda d: d.get("tank", {}).get("temperature") if d.get("tank") else None,
         available_fn=lambda d: d.get("online", False) and d.get("tank", {}).get("temperature") is not None,
+    ),
+    # ── Portata ───────────────────────────────────────────────────────────────
+    DiyHomeSensorDescription(
+        key="flow_in_rate",
+        name="Portata entrata",
+        native_unit_of_measurement=UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:water-pump",
+        value_fn=lambda d: d.get("flow", {}).get("flow_in_rate") if d.get("flow") else None,
+        available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="flow_out_rate",
+        name="Portata uscita",
+        native_unit_of_measurement=UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:water-pump",
+        value_fn=lambda d: d.get("flow", {}).get("flow_out_rate") if d.get("flow") else None,
+        available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
+    ),
+    # ── Consumo giornaliero ───────────────────────────────────────────────────
+    DiyHomeSensorDescription(
+        key="daily_consumption_in",
+        name="Consumo oggi (ingresso)",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:water-plus",
+        value_fn=lambda d: d.get("consumption_today", {}).get("liters_in", 0),
+        available_fn=lambda d: True,
+    ),
+    DiyHomeSensorDescription(
+        key="daily_consumption_out",
+        name="Consumo oggi (uscita)",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:water-minus",
+        value_fn=lambda d: d.get("consumption_today", {}).get("liters_out", 0),
+        available_fn=lambda d: True,
     ),
 )
 
