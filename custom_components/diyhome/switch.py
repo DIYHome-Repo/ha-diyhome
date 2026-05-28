@@ -23,6 +23,11 @@ async def async_setup_entry(
     coordinator: DiyHomeCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     client = hass.data[DOMAIN][entry.entry_id]["client"]
 
+    _LOGGER.warning(
+        "DiyHome switch setup: coordinator.data has %d device(s): %s",
+        len(coordinator.data),
+        list(coordinator.data.keys()),
+    )
     entities: list[SwitchEntity] = []
     for uid, device in coordinator.data.items():
         entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=1))

@@ -98,6 +98,12 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         try:
             data = await self.client.get_devices()
             devices = data.get("devices", [])
+            uids = [d.get("uid") for d in devices if d.get("uid")]
+            _LOGGER.warning(
+                "DiyHome API returned %d device(s): %s",
+                len(devices),
+                uids,
+            )
             return {d["uid"]: d for d in devices if d.get("uid")}
         except ClientResponseError as err:
             if err.status in (401, 403):
