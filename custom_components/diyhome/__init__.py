@@ -10,6 +10,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_entry_oauth2_flow
+
+from .config_flow import DiyHomeLocalOAuth2Implementation
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
@@ -37,7 +39,7 @@ def _oauth_implementation(
     (quando async_setup non è ancora stato chiamato da HA) e funziona correttamente
     anche ai restart successivi.
     """
-    return config_entry_oauth2_flow.LocalOAuth2Implementation(
+    return DiyHomeLocalOAuth2Implementation(
         hass,
         DOMAIN,
         OAUTH2_CLIENT_ID,
