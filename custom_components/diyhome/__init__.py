@@ -4,17 +4,21 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from homeassistant.components.application_credentials import (
-    ClientCredential,
-    async_import_client_credential,
-)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.helpers.config_entry_oauth2_flow import LocalOAuth2Implementation
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
-from .const import DOMAIN, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET, PLATFORMS
+from .const import (
+    DOMAIN,
+    OAUTH2_AUTHORIZE,
+    OAUTH2_CLIENT_ID,
+    OAUTH2_CLIENT_SECRET,
+    OAUTH2_TOKEN,
+    PLATFORMS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,15 +26,18 @@ SCAN_INTERVAL = timedelta(seconds=30)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Pre-carica le credenziali OAuth2 — nessun inserimento manuale richiesto."""
+    """Registra l'implementazione OAuth2 — nessuna dialog credenziali."""
     hass.data.setdefault(DOMAIN, {})
-    await async_import_client_credential(
+    config_entry_oauth2_flow.async_register_implementation(
         hass,
         DOMAIN,
-        ClientCredential(
-            client_id=OAUTH2_CLIENT_ID,
-            client_secret=OAUTH2_CLIENT_SECRET,
-            name="DiyHome",
+        LocalOAuth2Implementation(
+            hass,
+            DOMAIN,
+            OAUTH2_CLIENT_ID,
+            OAUTH2_CLIENT_SECRET,
+            OAUTH2_AUTHORIZE,
+            OAUTH2_TOKEN,
         ),
     )
     return True

@@ -1,13 +1,6 @@
-"""Application credentials for DiyHome (HA 2025.x)."""
-from homeassistant.components.application_credentials import AuthorizationServer
-from homeassistant.core import HomeAssistant
+"""Application credentials — non utilizzato.
 
-from .const import OAUTH2_AUTHORIZE, OAUTH2_TOKEN
-
-
-async def async_get_authorization_server(hass: HomeAssistant) -> AuthorizationServer:
-    """Return the authorization server for DiyHome."""
-    return AuthorizationServer(
-        authorize_url=OAUTH2_AUTHORIZE,
-        token_url=OAUTH2_TOKEN,
-    )
+L'implementazione OAuth2 viene registrata direttamente in async_setup
+tramite config_entry_oauth2_flow.async_register_implementation con
+LocalOAuth2Implementation, evitando la dialog 'Aggiungi credenziali'.
+"""
