@@ -59,7 +59,12 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:thermometer",
         value_fn=lambda d: d.get("tank", {}).get("temperature") if d.get("tank") else None,
-        available_fn=lambda d: d.get("online", False) and bool(d.get("tank", {}).get("temperature")),
+        # FIX: bool(0.0) == False → usare is not None per non escludere temperatura 0 °C
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("tank") is not None
+            and d.get("tank", {}).get("temperature") is not None
+        ),
     ),
     # ── Portata ───────────────────────────────────────────────────────────────
     DiyHomeSensorDescription(
@@ -83,6 +88,7 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
     ),
     # ── Consumo giornaliero ───────────────────────────────────────────────────
+    # FIX: restituire None (non 0) quando il dato manca — 0 litri ≠ dato assente
     DiyHomeSensorDescription(
         key="daily_consumption_in",
         name="Consumo oggi (ingresso)",
@@ -90,8 +96,15 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:water-plus",
-        value_fn=lambda d: d.get("consumption_today", {}).get("liters_in", 0),
-        available_fn=lambda d: True,
+        value_fn=lambda d: (
+            d.get("consumption_today", {}).get("liters_in")
+            if d.get("consumption_today") else None
+        ),
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("consumption_today") is not None
+            and d.get("consumption_today", {}).get("liters_in") is not None
+        ),
     ),
     DiyHomeSensorDescription(
         key="daily_consumption_out",
@@ -100,8 +113,15 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:water-minus",
-        value_fn=lambda d: d.get("consumption_today", {}).get("liters_out", 0),
-        available_fn=lambda d: True,
+        value_fn=lambda d: (
+            d.get("consumption_today", {}).get("liters_out")
+            if d.get("consumption_today") else None
+        ),
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("consumption_today") is not None
+            and d.get("consumption_today", {}).get("liters_out") is not None
+        ),
     ),
 )
 
@@ -115,15 +135,12 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
     for uid, device in coordinator.data.items():
-        # Sensori base (sempre creati)
         for description in SENSOR_TYPES:
             entities.append(DiyHomeSensor(coordinator, uid, description))
 
-        # Sensori temperatura aggiuntivi (temperatura_sensors multi-sonda)
         for ts in device.get("temp_sensors", []):
             entities.append(DiyHomeTempSensor(coordinator, uid, ts["address"], ts["name"]))
 
-        # Sensore "tempo rimanente irrigazione" per ogni zona attiva
         for zone in device.get("zones", []):
             entities.append(DiyHomeZoneTimeSensor(coordinator, uid, zone["index"], zone["name"]))
 
@@ -148,7 +165,8 @@ class DiyHomeSensor(DiyHomeEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.entity_description.available_fn(self._device_data)
+        # FIX: include super().available → unavailable quando il coordinator fallisce
+        return super().available and self.entity_description.available_fn(self._device_data)
 
 
 class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
@@ -189,7 +207,11 @@ class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self._device_data.get("online", False) and self._get_sensor().get("temp_c") is not None
+        return (
+            super().available
+            and self._device_data.get("online", False)
+            and self._get_sensor().get("temp_c") is not None
+        )
 
 
 class DiyHomeZoneTimeSensor(DiyHomeEntity, SensorEntity):
@@ -225,7 +247,7 @@ class DiyHomeZoneTimeSensor(DiyHomeEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self._device_data.get("online", False)
+        return super().available and self._device_data.get("online", False)
 
     @property
     def extra_state_attributes(self) -> dict:

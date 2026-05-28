@@ -28,9 +28,7 @@ async def async_setup_entry(
     for uid, device in coordinator.data.items():
         entities.append(DiyHomeOnlineSensor(coordinator, uid))
         entities.append(DiyHomeAlarmSensor(coordinator, uid))
-        # Sensore "irrigazione attiva" — True se almeno una zona è aperta
         entities.append(DiyHomeIrrigationActiveSensor(coordinator, uid))
-        # Una binary sensor per ogni zona
         for zone in device.get("zones", []):
             entities.append(DiyHomeZoneActiveSensor(coordinator, uid, zone["index"], zone["name"]))
     async_add_entities(entities)
@@ -84,6 +82,11 @@ class DiyHomeIrrigationActiveSensor(DiyHomeEntity, BinarySensorEntity):
         return any(z.get("is_active", False) for z in self._device_data.get("zones", []))
 
     @property
+    def available(self) -> bool:
+        # FIX: include super().available → unavailable quando il coordinator fallisce
+        return super().available and self._device_data.get("online", False)
+
+    @property
     def extra_state_attributes(self) -> dict:
         active_zones = [
             z.get("name") or f"Zona {z.get('index', 0) + 1}"
@@ -122,7 +125,8 @@ class DiyHomeZoneActiveSensor(DiyHomeEntity, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        return self._device_data.get("online", False)
+        # FIX: include super().available → unavailable quando il coordinator fallisce
+        return super().available and self._device_data.get("online", False)
 
     @property
     def extra_state_attributes(self) -> dict:

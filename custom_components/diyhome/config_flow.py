@@ -18,7 +18,11 @@ class DiyHomeOAuth2FlowHandler(
     AbstractOAuth2FlowHandler,
     domain=DOMAIN,
 ):
-    """Config flow DiyHome — salta la dialog credenziali impostando flow_impl direttamente."""
+    """Config flow DiyHome.
+
+    Imposta flow_impl direttamente con LocalOAuth2Implementation — bypassa
+    async_step_pick_implementation e la dialog 'Aggiungi credenziali applicazione'.
+    """
 
     DOMAIN = DOMAIN
     VERSION = 1

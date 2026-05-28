@@ -25,19 +25,14 @@ async def async_setup_entry(
 
     entities: list[SwitchEntity] = []
     for uid, device in coordinator.data.items():
-        # Valvola principale (sempre presente se il device è claimato)
         entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=1))
-        # Valvola 2 (opzionale — presente solo se configurata)
         if device.get("valve2") is not None:
             entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=2))
-        # Zone irrigazione
         for zone in device.get("zones", []):
             entities.append(DiyHomeZoneSwitch(coordinator, client, uid, zone["index"], zone["name"]))
 
     async_add_entities(entities)
 
-
-# ── Valvola principale / secondaria ──────────────────────────────────────────
 
 class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
     """Rappresenta una valvola DiyHome come switch HA."""
@@ -64,7 +59,8 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        return self._device_data.get("online", False)
+        # FIX: include super().available → unavailable quando il coordinator fallisce
+        return super().available and self._device_data.get("online", False)
 
     async def async_turn_on(self, **kwargs) -> None:
         action = f"valve{self._valve}_open" if self._valve == 2 else "valve_open"
@@ -76,8 +72,6 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         await self._client.send_command(self._uid, action)
         await self.coordinator.async_request_refresh()
 
-
-# ── Zone irrigazione ──────────────────────────────────────────────────────────
 
 class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
     """Rappresenta una zona irrigazione DiyHome come switch HA."""
@@ -107,7 +101,8 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        return self._device_data.get("online", False)
+        # FIX: include super().available → unavailable quando il coordinator fallisce
+        return super().available and self._device_data.get("online", False)
 
     @property
     def extra_state_attributes(self) -> dict:
