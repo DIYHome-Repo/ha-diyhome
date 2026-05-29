@@ -124,7 +124,7 @@ async def _listen_sse(
 
     # Debounce: mappa uid → timestamp ultimo refresh (epoch float)
     _last_refresh: dict[str, float] = {}
-    _MIN_REFRESH_INTERVAL = 1.0  # secondi
+    _MIN_REFRESH_INTERVAL = 0.3  # secondi — il backend fa già debounce 300ms
 
     while True:
         try:
@@ -172,9 +172,9 @@ async def _listen_sse(
             _LOGGER.debug("DiyHome SSE: task cancellato")
             return
         except Exception as err:
-            _LOGGER.debug("DiyHome SSE: errore connessione (%s), retry in 30s", err)
+            _LOGGER.debug("DiyHome SSE: errore connessione (%s), retry in 5s", err)
             try:
-                await asyncio.sleep(30)
+                await asyncio.sleep(5)
             except asyncio.CancelledError:
                 return
 

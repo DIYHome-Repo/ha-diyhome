@@ -2,24 +2,24 @@
   "config": {
     "step": {
       "pick_implementation": {
-        "title": "Connect DiyHome",
-        "description": "Log in to your DiyHome account to add your smart home devices to Home Assistant."
+        "title": "Connect DIYHome",
+        "description": "Log in to your DIYHome account to add your smart home devices to Home Assistant."
       },
       "reauth_confirm": {
-        "title": "Re-authenticate DiyHome",
-        "description": "Your DiyHome session has expired. Log in again to restore the connection."
+        "title": "Re-authenticate DIYHome",
+        "description": "Your DIYHome session has expired. Log in again to restore the connection."
       }
     },
     "abort": {
-      "already_configured": "DiyHome is already configured.",
+      "already_configured": "DIYHome is already configured.",
       "missing_configuration": "Unable to start OAuth flow. Please restart Home Assistant and try again.",
       "oauth_error": "OAuth2 authorization failed.",
       "oauth_unauthorized": "Authorization denied.",
       "oauth_timeout": "Authorization timed out.",
-      "oauth_failed": "Could not connect to DiyHome."
+      "oauth_failed": "Could not connect to DIYHome."
     },
     "create_entry": {
-      "default": "DiyHome connected successfully. Your devices are now available in Home Assistant."
+      "default": "DIYHome connected successfully. Your devices are now available in Home Assistant."
     }
   }
 }

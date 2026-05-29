@@ -2,24 +2,24 @@
   "config": {
     "step": {
       "pick_implementation": {
-        "title": "Connetti DiyHome",
-        "description": "Accedi al tuo account DiyHome per collegare i tuoi dispositivi smart home a Home Assistant."
+        "title": "Connetti DIYHome",
+        "description": "Accedi al tuo account DIYHome per collegare i tuoi dispositivi smart home a Home Assistant."
       },
       "reauth_confirm": {
-        "title": "Ri-autentica DiyHome",
-        "description": "La sessione DiyHome è scaduta. Accedi di nuovo per ripristinare la connessione."
+        "title": "Ri-autentica DIYHome",
+        "description": "La sessione DIYHome è scaduta. Accedi di nuovo per ripristinare la connessione."
       }
     },
     "abort": {
-      "already_configured": "DiyHome è già configurato.",
+      "already_configured": "DIYHome è già configurato.",
       "missing_configuration": "Impossibile avviare il flusso OAuth. Riavvia Home Assistant e riprova.",
       "oauth_error": "Autorizzazione OAuth2 fallita.",
       "oauth_unauthorized": "Autorizzazione negata.",
       "oauth_timeout": "Autorizzazione scaduta.",
-      "oauth_failed": "Impossibile connettersi a DiyHome."
+      "oauth_failed": "Impossibile connettersi a DIYHome."
     },
     "create_entry": {
-      "default": "DiyHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."
+      "default": "DIYHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."
     }
   }
 }

@@ -48,6 +48,7 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         self._valve = valve
         self._attr_unique_id = f"{uid}_valve{valve}"
         self._attr_icon = "mdi:valve"
+        self._optimistic_is_on: bool | None = None
 
     @property
     def name(self) -> str:
@@ -57,6 +58,10 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
+        # Stato ottimistico: aggiornato istantaneamente dopo il comando,
+        # azzerato non appena il coordinator porta lo stato confermato dal device.
+        if self._optimistic_is_on is not None:
+            return self._optimistic_is_on
         valve_data = self._device_data.get(f"valve{self._valve}")
         if valve_data is None:
             return None
@@ -67,12 +72,21 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         # FIX: include super().available → unavailable quando il coordinator fallisce
         return super().available and self._device_data.get("online", False)
 
+    def _handle_coordinator_update(self) -> None:
+        """Azzera lo stato ottimistico quando arriva la conferma dal coordinator."""
+        self._optimistic_is_on = None
+        super()._handle_coordinator_update()
+
     async def async_turn_on(self, **kwargs) -> None:
+        self._optimistic_is_on = True
+        self.async_write_ha_state()  # UI aggiornata istantaneamente
         action = f"valve{self._valve}_open" if self._valve == 2 else "valve_open"
         await self._client.send_command(self._uid, action)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
+        self._optimistic_is_on = False
+        self.async_write_ha_state()  # UI aggiornata istantaneamente
         action = f"valve{self._valve}_close" if self._valve == 2 else "valve_close"
         await self._client.send_command(self._uid, action)
         await self.coordinator.async_request_refresh()
@@ -88,6 +102,7 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._zone_name = zone_name
         self._attr_unique_id = f"{uid}_zone_{zone_index}"
         self._attr_icon = "mdi:sprinkler-variant"
+        self._optimistic_is_on: bool | None = None
 
     @property
     def name(self) -> str:
@@ -102,12 +117,19 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
+        if self._optimistic_is_on is not None:
+            return self._optimistic_is_on
         return self._get_zone().get("is_active", False)
 
     @property
     def available(self) -> bool:
         # FIX: include super().available → unavailable quando il coordinator fallisce
         return super().available and self._device_data.get("online", False)
+
+    def _handle_coordinator_update(self) -> None:
+        """Azzera lo stato ottimistico quando arriva la conferma dal coordinator."""
+        self._optimistic_is_on = None
+        super()._handle_coordinator_update()
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -120,9 +142,13 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         return attrs
 
     async def async_turn_on(self, **kwargs) -> None:
+        self._optimistic_is_on = True
+        self.async_write_ha_state()  # UI aggiornata istantaneamente
         await self._client.send_zone_command(self._uid, self._zone_index, True)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
+        self._optimistic_is_on = False
+        self.async_write_ha_state()  # UI aggiornata istantaneamente
         await self._client.send_zone_command(self._uid, self._zone_index, False)
         await self.coordinator.async_request_refresh()
