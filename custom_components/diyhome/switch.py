@@ -82,14 +82,18 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         self.async_write_ha_state()  # UI aggiornata istantaneamente
         action = f"valve{self._valve}_open" if self._valve == 2 else "valve_open"
         await self._client.send_command(self._uid, action)
-        await self.coordinator.async_request_refresh()
+        # NON chiamiamo async_request_refresh() subito: la DB non è ancora aggiornata
+        # (il firmware aggiorna telemetria dopo ~50-200ms dall'ACK MQTT).
+        # Il coordinator si aggiorna via SSE quando il device conferma lo stato (~300-700ms).
+        # Chiamare il refresh troppo presto azzererebbe lo stato ottimistico tornando allo
+        # stato vecchio (flip inverso visibile all'utente).
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
         self.async_write_ha_state()  # UI aggiornata istantaneamente
         action = f"valve{self._valve}_close" if self._valve == 2 else "valve_close"
         await self._client.send_command(self._uid, action)
-        await self.coordinator.async_request_refresh()
+        # NON chiamiamo async_request_refresh() subito: vedi commento in async_turn_on.
 
 
 class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
@@ -145,10 +149,10 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._optimistic_is_on = True
         self.async_write_ha_state()  # UI aggiornata istantaneamente
         await self._client.send_zone_command(self._uid, self._zone_index, True)
-        await self.coordinator.async_request_refresh()
+        # NON chiamiamo async_request_refresh() subito: vedi commento in DiyHomeValveSwitch.
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
         self.async_write_ha_state()  # UI aggiornata istantaneamente
         await self._client.send_zone_command(self._uid, self._zone_index, False)
-        await self.coordinator.async_request_refresh()
+        # NON chiamiamo async_request_refresh() subito: vedi commento in DiyHomeValveSwitch.
