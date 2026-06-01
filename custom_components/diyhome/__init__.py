@@ -17,7 +17,6 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
-from .config_flow import DiyHomeLocalOAuth2Implementation
 from .const import (
     CLOUD_URL,
     DOMAIN,
@@ -48,7 +47,7 @@ def _oauth_implementation(
     hass: HomeAssistant,
 ) -> config_entry_oauth2_flow.LocalOAuth2Implementation:
     """Crea l'implementazione OAuth2 DiyHome direttamente."""
-    return DiyHomeLocalOAuth2Implementation(
+    return config_entry_oauth2_flow.LocalOAuth2Implementation(
         hass,
         DOMAIN,
         OAUTH2_CLIENT_ID,
