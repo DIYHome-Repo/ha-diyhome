@@ -13,23 +13,39 @@ from .const import DOMAIN, OAUTH2_AUTHORIZE, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SEC
 
 _LOGGER = logging.getLogger(__name__)
 
+# Relay Nabu Casa — Universal Link registrato dall'app HA iOS.
+# Quando SFSafariViewController naviga su questo dominio, iOS intercetta
+# tramite Universal Links e passa il codice OAuth direttamente all'app HA
+# senza che il browser debba raggiungere l'URL locale di HA.
+# Funziona sia per istanze HTTP che HTTPS, sia in LAN che in remoto.
+_MY_REDIRECT = "https://my.home-assistant.io/redirect/oauth"
+
+
+class DiyHomeLocalOAuth2Implementation(LocalOAuth2Implementation):
+    """Forza sempre il relay my.home-assistant.io come redirect_uri.
+
+    Senza questo override, istanze HTTP usano l'URL locale HA
+    (es. http://homeassistant.local:8123/auth/external/callback).
+    Quell'URL non è raggiungibile da SFSafariViewController su iOS
+    (mDNS .local non funziona nel sandbox del browser), causando la
+    pagina di errore 'data:' di Safari e poi 'Sei disconnesso' nell'app.
+
+    Con my.home-assistant.io, l'app iOS HA intercetta via Universal Links
+    e gestisce il callback direttamente — il browser non deve mai
+    raggiungere l'URL locale di HA.
+    """
+
+    @property
+    def redirect_uri(self) -> str:
+        """Usa sempre il relay my.home-assistant.io (Universal Links iOS)."""
+        return _MY_REDIRECT
+
 
 class DiyHomeOAuth2FlowHandler(
     AbstractOAuth2FlowHandler,
     domain=DOMAIN,
 ):
-    """Config flow DiyHome.
-
-    Imposta self.flow_impl direttamente con le credenziali fisse DiyHome,
-    bypassa async_step_pick_implementation (evita dialog 'Aggiungi credenziali')
-    e salta al redirect OAuth2. Funziona sia alla prima installazione che ai
-    restart successivi — non richiede che async_setup() sia già stato chiamato.
-
-    Usa LocalOAuth2Implementation standard: per istanze HTTPS usa il relay
-    https://my.home-assistant.io/redirect/oauth (Universal Links iOS → app HA
-    riceve il codice OAuth senza aprire Safari). Per istanze HTTP usa il
-    redirect diretto sull'URL locale.
-    """
+    """Config flow DiyHome con OAuth2 tramite relay my.home-assistant.io."""
 
     DOMAIN = DOMAIN
     VERSION = 1
@@ -45,7 +61,7 @@ class DiyHomeOAuth2FlowHandler(
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
 
-        self.flow_impl = LocalOAuth2Implementation(
+        self.flow_impl = DiyHomeLocalOAuth2Implementation(
             self.hass,
             DOMAIN,
             OAUTH2_CLIENT_ID,
