@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import time
@@ -13,14 +14,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_entry_oauth2_flow
-
-from .config_flow import DiyHomeLocalOAuth2Implementation
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
+from .config_flow import DiyHomeLocalOAuth2Implementation
 from .const import (
-    DOMAIN,
     CLOUD_URL,
+    DOMAIN,
     OAUTH2_AUTHORIZE,
     OAUTH2_CLIENT_ID,
     OAUTH2_CLIENT_SECRET,
@@ -33,6 +33,15 @@ _LOGGER = logging.getLogger(__name__)
 # Polling di fallback — il coordinator si aggiorna ogni 30s anche senza SSE.
 # Con SSE attivo gli aggiornamenti arrivano in <1s appena il backend riceve MQTT.
 SCAN_INTERVAL = timedelta(seconds=30)
+
+
+@dataclass
+class DiyHomeRuntimeData:
+    """Dati runtime associati alla config entry DiyHome."""
+
+    coordinator: DiyHomeCoordinator
+    client: DiyHomeApiClient
+    sse_task: asyncio.Task | None = None
 
 
 def _oauth_implementation(
@@ -51,7 +60,6 @@ def _oauth_implementation(
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up DiyHome."""
-    hass.data.setdefault(DOMAIN, {})
     return True
 
 
@@ -64,10 +72,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = DiyHomeCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "coordinator": coordinator,
-        "client": client,
-    }
+    # ── Pattern moderno: entry.runtime_data invece di hass.data[DOMAIN] ───────
+    runtime_data = DiyHomeRuntimeData(coordinator=coordinator, client=client)
+    entry.runtime_data = runtime_data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -78,16 +85,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _listen_sse(hass, entry, coordinator, session),
         name=f"diyhome_sse_{entry.entry_id}",
     )
-    hass.data[DOMAIN][entry.entry_id]["sse_task"] = sse_task
+    runtime_data.sse_task = sse_task
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    runtime_data: DiyHomeRuntimeData = entry.runtime_data
+
     # Cancella il task SSE prima di fare unload
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    sse_task = entry_data.get("sse_task")
+    sse_task = runtime_data.sse_task
     if sse_task and not sse_task.done():
         sse_task.cancel()
         try:
@@ -95,10 +103,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except (asyncio.CancelledError, Exception):
             pass
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def _listen_sse(
@@ -114,8 +119,8 @@ async def _listen_sse(
     Alla ricezione di "device_update", il coordinator si aggiorna immediatamente
     invece di aspettare il poll a 30s.
 
-    Debounce lato client: max 1 async_request_refresh() per uid per 1s.
-    Il backend fa già debounce 300ms sui push SSE, ma questo secondo livello
+    Debounce lato client: max 1 async_request_refresh() per uid per 0.3s.
+    Il backend fa già debounce 100ms sui push SSE, ma questo secondo livello
     protegge da burst multipli di telemetria che arrivano comunque in rapida
     successione (es. valve ACK + shadow + stato).
     """
@@ -124,7 +129,7 @@ async def _listen_sse(
 
     # Debounce: mappa uid → timestamp ultimo refresh (epoch float)
     _last_refresh: dict[str, float] = {}
-    _MIN_REFRESH_INTERVAL = 0.3  # secondi — il backend fa già debounce 300ms
+    _MIN_REFRESH_INTERVAL = 0.3  # secondi
 
     while True:
         try:
@@ -137,7 +142,6 @@ async def _listen_sse(
                 line = raw_line.decode("utf-8").strip()
 
                 if not line or line.startswith(":"):
-                    # Heartbeat ping o riga vuota — reset event corrente
                     current_event = None
                     continue
 
@@ -191,35 +195,60 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             always_update=False,
         )
         self.client = client
+        # Traccia lo stato online dei device per loggare le transizioni (log-when-unavailable)
+        self._online_states: dict[str, bool] = {}
+        self._whoami_logged = False
 
     async def _async_update_data(self) -> dict:
         try:
             # ── Diagnostica whoami (una sola volta al primo avvio) ────────────
-            if not getattr(self, "_whoami_logged", False):
+            if not self._whoami_logged:
                 try:
                     whoami = await self.client.whoami()
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "DiyHome WHOAMI → userId=%s email=%s allDevices=%s",
                         whoami.get("userId"),
                         whoami.get("email"),
                         [
-                            f"{d.get('name')}(uid={d.get('device_uid')},claimed={d.get('claimed_at')},rma={d.get('rma_at')},ok={d.get('visibileInHA')})"
+                            f"{d.get('name')}(uid={d.get('device_uid')},claimed={d.get('claimed_at')},ok={d.get('visibileInHA')})"
                             for d in whoami.get("allDevices", [])
                         ],
                     )
                 except Exception as we:
-                    _LOGGER.warning("DiyHome WHOAMI errore: %s", we)
+                    _LOGGER.debug("DiyHome WHOAMI errore: %s", we)
                 self._whoami_logged = True
 
             data = await self.client.get_devices()
-            devices = data.get("devices", [])
-            uids = [d.get("uid") for d in devices if d.get("uid")]
+            devices: dict[str, dict] = {
+                d["uid"]: d for d in data.get("devices", []) if d.get("uid")
+            }
+            uids = list(devices.keys())
             _LOGGER.debug(
                 "DiyHome API returned %d device(s): %s",
                 len(devices),
                 uids,
             )
-            return {d["uid"]: d for d in devices if d.get("uid")}
+
+            # ── log-when-unavailable: logga transizioni online/offline ───────
+            for uid, device in devices.items():
+                online = device.get("online", False)
+                was_online = self._online_states.get(uid)
+                if was_online is True and not online:
+                    _LOGGER.warning(
+                        "DiyHome device %s (%s) è andato offline",
+                        uid,
+                        device.get("name", uid),
+                    )
+                elif was_online is False and online:
+                    _LOGGER.info(
+                        "DiyHome device %s (%s) è tornato online",
+                        uid,
+                        device.get("name", uid),
+                    )
+            self._online_states = {uid: d.get("online", False) for uid, d in devices.items()}
+
+            return devices
+
         except ClientResponseError as err:
             if err.status in (401, 403):
                 raise ConfigEntryAuthFailed(

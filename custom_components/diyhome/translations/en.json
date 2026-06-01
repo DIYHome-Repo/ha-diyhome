@@ -21,5 +21,41 @@
     "create_entry": {
       "default": "DIYHome connected successfully. Your devices are now available in Home Assistant."
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "irrigation_active": {
+        "name": "Irrigation active"
+      }
+    },
+    "sensor": {
+      "tank_level": {
+        "name": "Tank level"
+      },
+      "tank_liters": {
+        "name": "Tank volume"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "flow_in_rate": {
+        "name": "Inlet flow rate"
+      },
+      "flow_out_rate": {
+        "name": "Outlet flow rate"
+      },
+      "daily_consumption_in": {
+        "name": "Today's consumption (inlet)"
+      },
+      "daily_consumption_out": {
+        "name": "Today's consumption (outlet)"
+      }
+    }
   }
 }

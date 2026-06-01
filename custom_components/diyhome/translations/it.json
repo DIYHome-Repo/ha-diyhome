@@ -21,5 +21,41 @@
     "create_entry": {
       "default": "DIYHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "alarm": {
+        "name": "Allarme"
+      },
+      "irrigation_active": {
+        "name": "Irrigazione attiva"
+      }
+    },
+    "sensor": {
+      "tank_level": {
+        "name": "Livello cisterna"
+      },
+      "tank_liters": {
+        "name": "Volume cisterna"
+      },
+      "temperature": {
+        "name": "Temperatura"
+      },
+      "flow_in_rate": {
+        "name": "Portata entrata"
+      },
+      "flow_out_rate": {
+        "name": "Portata uscita"
+      },
+      "daily_consumption_in": {
+        "name": "Consumo oggi (ingresso)"
+      },
+      "daily_consumption_out": {
+        "name": "Consumo oggi (uscita)"
+      }
+    }
   }
 }

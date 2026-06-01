@@ -8,14 +8,17 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DiyHomeCoordinator
-from .const import DOMAIN
+from . import DiyHomeCoordinator, DiyHomeRuntimeData
 from .entity import DiyHomeEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+# 0 = nessun limite, appropriato per entità basate su coordinator
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -23,27 +26,32 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: DiyHomeCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    runtime_data: DiyHomeRuntimeData = entry.runtime_data
+    coordinator = runtime_data.coordinator
+
     entities: list[BinarySensorEntity] = []
     for uid, device in coordinator.data.items():
         entities.append(DiyHomeOnlineSensor(coordinator, uid))
         entities.append(DiyHomeAlarmSensor(coordinator, uid))
         entities.append(DiyHomeIrrigationActiveSensor(coordinator, uid))
         for zone in device.get("zones", []):
-            entities.append(DiyHomeZoneActiveSensor(coordinator, uid, zone["index"], zone["name"]))
+            entities.append(
+                DiyHomeZoneActiveSensor(coordinator, uid, zone["index"], zone["name"])
+            )
     async_add_entities(entities)
 
 
 class DiyHomeOnlineSensor(DiyHomeEntity, BinarySensorEntity):
     """Connettività device — True = online."""
 
+    _attr_translation_key = "online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_name = "Online"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:lan-connect"
 
     def __init__(self, coordinator: DiyHomeCoordinator, uid: str) -> None:
         super().__init__(coordinator, uid)
         self._attr_unique_id = f"{uid}_online"
-        self._attr_icon = "mdi:lan-connect"
 
     @property
     def is_on(self) -> bool:
@@ -53,13 +61,13 @@ class DiyHomeOnlineSensor(DiyHomeEntity, BinarySensorEntity):
 class DiyHomeAlarmSensor(DiyHomeEntity, BinarySensorEntity):
     """Allarme attivo — True = anomalia rilevata (perdita d'acqua, ecc.)."""
 
+    _attr_translation_key = "alarm"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_name = "Allarme"
+    _attr_icon = "mdi:alert"
 
     def __init__(self, coordinator: DiyHomeCoordinator, uid: str) -> None:
         super().__init__(coordinator, uid)
         self._attr_unique_id = f"{uid}_alarm"
-        self._attr_icon = "mdi:alert"
 
     @property
     def is_on(self) -> bool:
@@ -69,21 +77,22 @@ class DiyHomeAlarmSensor(DiyHomeEntity, BinarySensorEntity):
 class DiyHomeIrrigationActiveSensor(DiyHomeEntity, BinarySensorEntity):
     """Almeno una zona irrigazione è aperta."""
 
+    _attr_translation_key = "irrigation_active"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
-    _attr_name = "Irrigazione attiva"
+    _attr_icon = "mdi:sprinkler"
 
     def __init__(self, coordinator: DiyHomeCoordinator, uid: str) -> None:
         super().__init__(coordinator, uid)
         self._attr_unique_id = f"{uid}_irrigation_active"
-        self._attr_icon = "mdi:sprinkler"
 
     @property
     def is_on(self) -> bool:
-        return any(z.get("is_active", False) for z in self._device_data.get("zones", []))
+        return any(
+            z.get("is_active", False) for z in self._device_data.get("zones", [])
+        )
 
     @property
     def available(self) -> bool:
-        # FIX: include super().available → unavailable quando il coordinator fallisce
         return super().available and self._device_data.get("online", False)
 
     @property
@@ -101,7 +110,13 @@ class DiyHomeZoneActiveSensor(DiyHomeEntity, BinarySensorEntity):
 
     _attr_device_class = BinarySensorDeviceClass.RUNNING
 
-    def __init__(self, coordinator: DiyHomeCoordinator, uid: str, zone_index: int, zone_name: str) -> None:
+    def __init__(
+        self,
+        coordinator: DiyHomeCoordinator,
+        uid: str,
+        zone_index: int,
+        zone_name: str,
+    ) -> None:
         super().__init__(coordinator, uid)
         self._zone_index = zone_index
         self._zone_name = zone_name
@@ -125,7 +140,6 @@ class DiyHomeZoneActiveSensor(DiyHomeEntity, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        # FIX: include super().available → unavailable quando il coordinator fallisce
         return super().available and self._device_data.get("online", False)
 
     @property

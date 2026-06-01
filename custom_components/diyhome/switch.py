@@ -8,11 +8,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DiyHomeCoordinator
-from .const import DOMAIN
+from . import DiyHomeCoordinator, DiyHomeRuntimeData
 from .entity import DiyHomeEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+# 0 = nessun limite, appropriato per entità basate su coordinator
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -20,11 +22,12 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: DiyHomeCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    client = hass.data[DOMAIN][entry.entry_id]["client"]
+    runtime_data: DiyHomeRuntimeData = entry.runtime_data
+    coordinator = runtime_data.coordinator
+    client = runtime_data.client
 
-    _LOGGER.warning(
-        "DiyHome switch setup: coordinator.data has %d device(s): %s",
+    _LOGGER.debug(
+        "DiyHome switch setup: coordinator.data ha %d device(s): %s",
         len(coordinator.data),
         list(coordinator.data.keys()),
     )
@@ -34,7 +37,9 @@ async def async_setup_entry(
         if device.get("valve2") is not None:
             entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=2))
         for zone in device.get("zones", []):
-            entities.append(DiyHomeZoneSwitch(coordinator, client, uid, zone["index"], zone["name"]))
+            entities.append(
+                DiyHomeZoneSwitch(coordinator, client, uid, zone["index"], zone["name"])
+            )
 
     async_add_entities(entities)
 
@@ -42,7 +47,7 @@ async def async_setup_entry(
 class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
     """Rappresenta una valvola DiyHome come switch HA."""
 
-    def __init__(self, coordinator, client, uid: str, valve: int) -> None:
+    def __init__(self, coordinator: DiyHomeCoordinator, client, uid: str, valve: int) -> None:
         super().__init__(coordinator, uid)
         self._client = client
         self._valve = valve
@@ -69,7 +74,6 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        # FIX: include super().available → unavailable quando il coordinator fallisce
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
@@ -79,27 +83,30 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs) -> None:
         self._optimistic_is_on = True
-        self.async_write_ha_state()  # UI aggiornata istantaneamente
+        self.async_write_ha_state()
         action = f"valve{self._valve}_open" if self._valve == 2 else "valve_open"
         await self._client.send_command(self._uid, action)
-        # NON chiamiamo async_request_refresh() subito: la DB non è ancora aggiornata
-        # (il firmware aggiorna telemetria dopo ~50-200ms dall'ACK MQTT).
+        # NON chiamiamo async_request_refresh() subito: la DB non è ancora aggiornata.
         # Il coordinator si aggiorna via SSE quando il device conferma lo stato (~300-700ms).
-        # Chiamare il refresh troppo presto azzererebbe lo stato ottimistico tornando allo
-        # stato vecchio (flip inverso visibile all'utente).
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
-        self.async_write_ha_state()  # UI aggiornata istantaneamente
+        self.async_write_ha_state()
         action = f"valve{self._valve}_close" if self._valve == 2 else "valve_close"
         await self._client.send_command(self._uid, action)
-        # NON chiamiamo async_request_refresh() subito: vedi commento in async_turn_on.
 
 
 class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
     """Rappresenta una zona irrigazione DiyHome come switch HA."""
 
-    def __init__(self, coordinator, client, uid: str, zone_index: int, zone_name: str) -> None:
+    def __init__(
+        self,
+        coordinator: DiyHomeCoordinator,
+        client,
+        uid: str,
+        zone_index: int,
+        zone_name: str,
+    ) -> None:
         super().__init__(coordinator, uid)
         self._client = client
         self._zone_index = zone_index
@@ -127,7 +134,6 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        # FIX: include super().available → unavailable quando il coordinator fallisce
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
@@ -138,7 +144,10 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
     @property
     def extra_state_attributes(self) -> dict:
         zone = self._get_zone()
-        attrs: dict = {"zone_index": self._zone_index, "zone_type": zone.get("type", "sprinkler")}
+        attrs: dict = {
+            "zone_index": self._zone_index,
+            "zone_type": zone.get("type", "sprinkler"),
+        }
         if zone.get("minutes_remaining") is not None:
             attrs["minutes_remaining"] = zone["minutes_remaining"]
         if zone.get("opened_at"):
@@ -147,12 +156,10 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs) -> None:
         self._optimistic_is_on = True
-        self.async_write_ha_state()  # UI aggiornata istantaneamente
+        self.async_write_ha_state()
         await self._client.send_zone_command(self._uid, self._zone_index, True)
-        # NON chiamiamo async_request_refresh() subito: vedi commento in DiyHomeValveSwitch.
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
-        self.async_write_ha_state()  # UI aggiornata istantaneamente
+        self.async_write_ha_state()
         await self._client.send_zone_command(self._uid, self._zone_index, False)
-        # NON chiamiamo async_request_refresh() subito: vedi commento in DiyHomeValveSwitch.
