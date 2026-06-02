@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connecter DiyHome",
+        "description": "Entrez vos identifiants DiyHome.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "E-mail ou mot de passe incorrect.",
+      "cannot_connect": "Impossible de se connecter à DiyHome. Vérifiez votre connexion.",
+      "unknown": "Erreur inattendue. Consultez les journaux de Home Assistant."
+    },
+    "abort": {
+      "already_configured": "DiyHome est déjà configuré."
+    },
+    "create_entry": {
+      "default": "DiyHome connecté avec succès. Vos appareils sont maintenant disponibles dans Home Assistant."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "En ligne" },
+      "alarm": { "name": "Alarme" },
+      "irrigation_active": { "name": "Irrigation en cours" }
+    },
+    "sensor": {
+      "tank_level": { "name": "Niveau du réservoir" },
+      "tank_liters": { "name": "Volume du réservoir" },
+      "temperature": { "name": "Température" },
+      "flow_in_rate": { "name": "Débit entrant" },
+      "flow_out_rate": { "name": "Débit sortant" },
+      "daily_consumption_in": { "name": "Entrée aujourd'hui" },
+      "daily_consumption_out": { "name": "Sortie aujourd'hui" },
+      "zone_timer": { "name": "{zone_name} temps restant" }
+    },
+    "switch": {
+      "valve": { "name": "Vanne {number}" }
+    }
+  }
+}
