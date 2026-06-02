@@ -9,11 +9,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
-from .entity import DiyHomeEntity
+from .entity import DiyHomeEntity, SUB_DEVICE_IRRIGATION
 
 _LOGGER = logging.getLogger(__name__)
 
-# 0 = nessun limite, appropriato per entità basate su coordinator
 PARALLEL_UPDATES = 0
 
 
@@ -26,11 +25,6 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
     client = runtime_data.client
 
-    _LOGGER.debug(
-        "DiyHome switch setup: coordinator.data ha %d device(s): %s",
-        len(coordinator.data),
-        list(coordinator.data.keys()),
-    )
     entities: list[SwitchEntity] = []
     for uid, device in coordinator.data.items():
         entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=1))
@@ -45,26 +39,30 @@ async def async_setup_entry(
 
 
 class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
-    """Rappresenta una valvola DiyHome come switch HA."""
+    """Valvola DiyHome — device principale."""
+
+    _attr_icon = "mdi:valve"
+    _attr_translation_key = "valve"
 
     def __init__(self, coordinator: DiyHomeCoordinator, client, uid: str, valve: int) -> None:
         super().__init__(coordinator, uid)
         self._client = client
         self._valve = valve
         self._attr_unique_id = f"{uid}_valve{valve}"
-        self._attr_icon = "mdi:valve"
         self._optimistic_is_on: bool | None = None
 
     @property
-    def name(self) -> str:
-        data = self._device_data
-        valve_data = data.get(f"valve{self._valve}", {})
-        return valve_data.get("name") or f"Valvola {self._valve}"
+    def translation_placeholders(self) -> dict:
+        return {"number": str(self._valve)}
+
+    @property
+    def name(self) -> str | None:
+        """Usa il nome personalizzato dal DB se disponibile, altrimenti translation_key."""
+        valve_data = self._device_data.get(f"valve{self._valve}", {})
+        return valve_data.get("name") or None
 
     @property
     def is_on(self) -> bool | None:
-        # Stato ottimistico: aggiornato istantaneamente dopo il comando,
-        # azzerato non appena il coordinator porta lo stato confermato dal device.
         if self._optimistic_is_on is not None:
             return self._optimistic_is_on
         valve_data = self._device_data.get(f"valve{self._valve}")
@@ -77,7 +75,6 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
-        """Azzera lo stato ottimistico quando arriva la conferma dal coordinator."""
         self._optimistic_is_on = None
         super()._handle_coordinator_update()
 
@@ -86,8 +83,6 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         self.async_write_ha_state()
         action = f"valve{self._valve}_open" if self._valve == 2 else "valve_open"
         await self._client.send_command(self._uid, action)
-        # NON chiamiamo async_request_refresh() subito: la DB non è ancora aggiornata.
-        # Il coordinator si aggiorna via SSE quando il device conferma lo stato (~300-700ms).
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
@@ -97,7 +92,10 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
 
 class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
-    """Rappresenta una zona irrigazione DiyHome come switch HA."""
+    """Zona irrigazione — sub-device Irrigation."""
+
+    _sub_device = SUB_DEVICE_IRRIGATION
+    _attr_icon = "mdi:sprinkler-variant"
 
     def __init__(
         self,
@@ -112,13 +110,13 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._zone_index = zone_index
         self._zone_name = zone_name
         self._attr_unique_id = f"{uid}_zone_{zone_index}"
-        self._attr_icon = "mdi:sprinkler-variant"
         self._optimistic_is_on: bool | None = None
 
     @property
     def name(self) -> str:
+        """Nome zona dall'utente — non traducibile (stringa personalizzata)."""
         zone = self._get_zone()
-        return zone.get("name") or self._zone_name or f"Zona {self._zone_index + 1}"
+        return zone.get("name") or self._zone_name or f"Zone {self._zone_index + 1}"
 
     def _get_zone(self) -> dict:
         for z in self._device_data.get("zones", []):
@@ -137,7 +135,6 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
-        """Azzera lo stato ottimistico quando arriva la conferma dal coordinator."""
         self._optimistic_is_on = None
         super()._handle_coordinator_update()
 
