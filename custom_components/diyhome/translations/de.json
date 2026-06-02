@@ -26,7 +26,8 @@
     "binary_sensor": {
       "online": { "name": "Online" },
       "alarm": { "name": "Alarm" },
-      "irrigation_active": { "name": "Bewässerung läuft" }
+      "irrigation_active": { "name": "Bewässerung läuft" },
+      "pump_relay": { "name": "Pumpenrelais" }
     },
     "sensor": {
       "tank_level": { "name": "Tankfüllstand" },
@@ -36,10 +37,17 @@
       "flow_out_rate": { "name": "Ablaufrate" },
       "daily_consumption_in": { "name": "Heutiger Eingang" },
       "daily_consumption_out": { "name": "Heutiger Ausgang" },
-      "zone_timer": { "name": "{zone_name} verbleibende Zeit" }
+      "zone_timer": { "name": "{zone_name} verbleibende Zeit" },
+      "signal_strength": { "name": "Signalstärke" },
+      "uptime": { "name": "Betriebszeit" },
+      "firmware_version": { "name": "Firmware-Version" },
+      "wifi_network": { "name": "WLAN-Netzwerk" },
+      "ip_address": { "name": "IP-Adresse" },
+      "pump_mode": { "name": "Pumpenmodus" }
     },
     "switch": {
-      "valve": { "name": "Ventil {number}" }
+      "valve": { "name": "Ventil {number}" },
+      "pump_enabled": { "name": "Pumpe" }
     }
   }
 }
