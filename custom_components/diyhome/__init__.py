@@ -8,6 +8,10 @@ import time
 from dataclasses import dataclass
 from datetime import timedelta
 
+from homeassistant.components.application_credentials import (
+    ClientCredential,
+    async_import_client_credential,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -18,10 +22,8 @@ from .api import DiyHomeApiClient
 from .const import (
     CLOUD_URL,
     DOMAIN,
-    OAUTH2_AUTHORIZE,
     OAUTH2_CLIENT_ID,
     OAUTH2_CLIENT_SECRET,
-    OAUTH2_TOKEN,
     PLATFORMS,
 )
 
@@ -40,22 +42,19 @@ class DiyHomeRuntimeData:
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Registra l'implementazione OAuth2 con credenziali hardcoded.
+    """Pre-importa le credenziali OAuth2 nel sistema application_credentials di HA.
 
-    Chiamato da HA prima di async_setup_entry. Registra LocalOAuth2Implementation
-    in hass.data in modo che AbstractOAuth2FlowHandler la trovi automaticamente
-    senza richiedere all'utente di inserire credenziali manualmente.
+    HA 2025+ richiede che le credenziali vengano registrate tramite
+    async_import_client_credential (sistema application_credentials),
+    non più tramite async_register_implementation.
+    Questo evita che HA mostri il form per inserire client_id/secret.
     """
-    config_entry_oauth2_flow.async_register_implementation(
+    await async_import_client_credential(
         hass,
         DOMAIN,
-        config_entry_oauth2_flow.LocalOAuth2Implementation(
-            hass=hass,
-            domain=DOMAIN,
+        ClientCredential(
             client_id=OAUTH2_CLIENT_ID,
             client_secret=OAUTH2_CLIENT_SECRET,
-            authorize_url=OAUTH2_AUTHORIZE,
-            token_url=OAUTH2_TOKEN,
         ),
     )
     return True
