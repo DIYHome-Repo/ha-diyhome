@@ -26,7 +26,8 @@
     "binary_sensor": {
       "online": { "name": "Online" },
       "alarm": { "name": "Alarm" },
-      "irrigation_active": { "name": "Beregening actief" }
+      "irrigation_active": { "name": "Beregening actief" },
+      "pump_relay": { "name": "Pomprelais" }
     },
     "sensor": {
       "tank_level": { "name": "Tankpeil" },
@@ -36,10 +37,17 @@
       "flow_out_rate": { "name": "Uitstroomsnelheid" },
       "daily_consumption_in": { "name": "Huidig verbruik in" },
       "daily_consumption_out": { "name": "Huidig verbruik uit" },
-      "zone_timer": { "name": "{zone_name} resterende tijd" }
+      "zone_timer": { "name": "{zone_name} resterende tijd" },
+      "signal_strength": { "name": "Signaalsterkte" },
+      "uptime": { "name": "Bedrijfstijd" },
+      "firmware_version": { "name": "Firmwareversie" },
+      "wifi_network": { "name": "Wi-Fi netwerk" },
+      "ip_address": { "name": "IP-adres" },
+      "pump_mode": { "name": "Pompstand" }
     },
     "switch": {
-      "valve": { "name": "Klep {number}" }
+      "valve": { "name": "Klep {number}" },
+      "pump_enabled": { "name": "Pomp" }
     }
   }
 }
