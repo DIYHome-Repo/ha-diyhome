@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Połącz DiyHome",
+        "description": "Wprowadź dane logowania do konta DiyHome.",
+        "data": {
+          "email": "E-mail",
+          "password": "Hasło"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Nieprawidłowy adres e-mail lub hasło.",
+      "cannot_connect": "Nie można połączyć się z DiyHome. Sprawdź połączenie internetowe.",
+      "unknown": "Nieoczekiwany błąd. Sprawdź dzienniki Home Assistant."
+    },
+    "abort": {
+      "already_configured": "DiyHome jest już skonfigurowany."
+    },
+    "create_entry": {
+      "default": "DiyHome połączony pomyślnie. Twoje urządzenia są teraz dostępne w Home Assistant."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "alarm": { "name": "Alarm" },
+      "irrigation_active": { "name": "Nawadnianie aktywne" }
+    },
+    "sensor": {
+      "tank_level": { "name": "Poziom zbiornika" },
+      "tank_liters": { "name": "Objętość zbiornika" },
+      "temperature": { "name": "Temperatura" },
+      "flow_in_rate": { "name": "Przepływ wejściowy" },
+      "flow_out_rate": { "name": "Przepływ wyjściowy" },
+      "daily_consumption_in": { "name": "Dzisiejszy dopływ" },
+      "daily_consumption_out": { "name": "Dzisiejszy odpływ" },
+      "zone_timer": { "name": "{zone_name} pozostały czas" }
+    },
+    "switch": {
+      "valve": { "name": "Zawór {number}" }
+    }
+  }
+}
