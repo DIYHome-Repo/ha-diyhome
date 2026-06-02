@@ -2,22 +2,26 @@
 from __future__ import annotations
 
 import asyncio
-import aiohttp
-from dataclasses import dataclass
-import json
 import logging
+import json
 import time
+from dataclasses import dataclass
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import DiyHomeApiClient, CLOUD_CALLBACK_URI
+from .api import DiyHomeApiClient
 from .const import (
     CLOUD_URL,
     DOMAIN,
+    OAUTH2_AUTHORIZE,
+    OAUTH2_CLIENT_ID,
+    OAUTH2_CLIENT_SECRET,
+    OAUTH2_TOKEN,
     PLATFORMS,
 )
 
@@ -35,11 +39,50 @@ class DiyHomeRuntimeData:
     sse_task: asyncio.Task | None = None
 
 
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Registra l'implementazione OAuth2 con credenziali hardcoded.
+
+    Chiamato da HA prima di async_setup_entry. Registra LocalOAuth2Implementation
+    in hass.data in modo che AbstractOAuth2FlowHandler la trovi automaticamente
+    senza richiedere all'utente di inserire credenziali manualmente.
+    """
+    config_entry_oauth2_flow.async_register_implementation(
+        hass,
+        DOMAIN,
+        config_entry_oauth2_flow.LocalOAuth2Implementation(
+            hass=hass,
+            domain=DOMAIN,
+            client_id=OAUTH2_CLIENT_ID,
+            client_secret=OAUTH2_CLIENT_SECRET,
+            authorize_url=OAUTH2_AUTHORIZE,
+            token_url=OAUTH2_TOKEN,
+        ),
+    )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DiyHome from a config entry."""
-    client = DiyHomeApiClient(hass, entry)
+    try:
+        implementation = (
+            await config_entry_oauth2_flow.async_get_config_entry_implementation(
+                hass, entry
+            )
+        )
+    except Exception as err:
+        _LOGGER.error("DiyHome: impossibile ottenere OAuth2 implementation: %s", err)
+        raise ConfigEntryNotReady("OAuth2 implementation non disponibile") from err
+
+    session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
+    client = DiyHomeApiClient(session)
     coordinator = DiyHomeCoordinator(hass, client)
-    await coordinator.async_config_entry_first_refresh()
+
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed:
+        raise
+    except Exception as err:
+        raise ConfigEntryNotReady(f"DiyHome non raggiungibile: {err}") from err
 
     runtime_data = DiyHomeRuntimeData(coordinator=coordinator, client=client)
     entry.runtime_data = runtime_data
@@ -47,7 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     sse_task = hass.async_create_task(
-        _listen_sse(hass, entry, coordinator),
+        _listen_sse(hass, entry, coordinator, session),
         name=f"diyhome_sse_{entry.entry_id}",
     )
     runtime_data.sse_task = sse_task
@@ -74,8 +117,11 @@ async def _listen_sse(
     hass: HomeAssistant,
     entry: ConfigEntry,
     coordinator: "DiyHomeCoordinator",
+    session: config_entry_oauth2_flow.OAuth2Session,
 ) -> None:
     """Long-running task SSE: riceve push real-time dal backend DiyHome."""
+    import aiohttp
+
     stream_url = f"{CLOUD_URL}/api/ha/stream"
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
 
@@ -84,11 +130,12 @@ async def _listen_sse(
 
     while True:
         try:
+            await session.async_ensure_token_valid()
             access_token = entry.data["token"]["access_token"]
             headers = {"Authorization": f"Bearer {access_token}"}
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
                     stream_url,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=None, connect=15),

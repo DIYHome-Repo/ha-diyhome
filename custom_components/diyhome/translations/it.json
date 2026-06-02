@@ -1,17 +1,20 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "Connetti DIYHome",
-        "description": "Verrai reindirizzato al sito DIYHome per autorizzare la connessione."
+      "pick_implementation": {
+        "title": "Connetti DIYHome"
       }
     },
     "abort": {
       "already_configured": "DIYHome è già configurato.",
+      "missing_configuration": "Nessuna configurazione OAuth2 trovata.",
+      "authorize_url_fail": "Impossibile generare l'URL di autorizzazione.",
+      "no_url_available": "Home Assistant non ha un URL esterno configurato.",
       "oauth_error": "Autorizzazione OAuth2 fallita. Riprova.",
       "oauth_unauthorized": "Autorizzazione negata.",
       "oauth_timeout": "Autorizzazione scaduta.",
-      "oauth_failed": "Impossibile connettersi a DIYHome."
+      "oauth_failed": "Impossibile connettersi a DIYHome.",
+      "user_rejected_authorization": "Hai negato l'accesso a DIYHome."
     },
     "create_entry": {
       "default": "DIYHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."

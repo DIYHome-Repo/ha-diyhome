@@ -1,7 +1,7 @@
-"""Application credentials — non usato.
+"""Application credentials — non usato da questo componente.
 
-DiyHome non usa il sistema application_credentials di HA.
-Il config flow gestisce il token OAuth2 direttamente tramite
-DiyHomeConfigFlow (config_entries.ConfigFlow), senza
-AbstractOAuth2FlowHandler.
+DiyHome registra l'implementazione OAuth2 direttamente in async_setup()
+tramite config_entry_oauth2_flow.async_register_implementation() +
+LocalOAuth2Implementation con credenziali hardcoded.
+Nessun input utente richiesto.
 """
