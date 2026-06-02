@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connetti DIYHome",
-        "description": "Inserisci le credenziali del tuo account DiyHome.",
+        "title": "Connect DiyHome",
+        "description": "Enter your DiyHome account credentials.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -11,15 +11,15 @@
       }
     },
     "error": {
-      "invalid_auth": "Email o password non corretti.",
-      "cannot_connect": "Impossibile connettersi a DiyHome. Controlla la tua connessione.",
-      "unknown": "Errore imprevisto. Controlla i log di Home Assistant."
+      "invalid_auth": "Incorrect email or password.",
+      "cannot_connect": "Unable to connect to DiyHome. Check your internet connection.",
+      "unknown": "Unexpected error. Check Home Assistant logs."
     },
     "abort": {
-      "already_configured": "DIYHome è già configurato."
+      "already_configured": "DiyHome is already configured."
     },
     "create_entry": {
-      "default": "DIYHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."
+      "default": "DiyHome connected successfully. Your devices are now available in Home Assistant."
     }
   },
   "entity": {
@@ -28,33 +28,41 @@
         "name": "Online"
       },
       "alarm": {
-        "name": "Allarme"
+        "name": "Alarm"
       },
       "irrigation_active": {
-        "name": "Irrigazione attiva"
+        "name": "Irrigation running"
       }
     },
     "sensor": {
       "tank_level": {
-        "name": "Livello cisterna"
+        "name": "Tank level"
       },
       "tank_liters": {
-        "name": "Volume cisterna"
+        "name": "Tank volume"
       },
       "temperature": {
-        "name": "Temperatura"
+        "name": "Temperature"
       },
       "flow_in_rate": {
-        "name": "Portata entrata"
+        "name": "Inlet flow rate"
       },
       "flow_out_rate": {
-        "name": "Portata uscita"
+        "name": "Outlet flow rate"
       },
       "daily_consumption_in": {
-        "name": "Consumo oggi (ingresso)"
+        "name": "Today's inlet"
       },
       "daily_consumption_out": {
-        "name": "Consumo oggi (uscita)"
+        "name": "Today's outlet"
+      },
+      "zone_timer": {
+        "name": "{zone_name} remaining time"
+      }
+    },
+    "switch": {
+      "valve": {
+        "name": "Valve {number}"
       }
     }
   }
