@@ -17,7 +17,6 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
-from .config_flow import DiyHomeLocalOAuth2Implementation
 from .const import (
     CLOUD_URL,
     DOMAIN,
@@ -31,7 +30,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # Polling di fallback — il coordinator si aggiorna ogni 30s anche senza SSE.
-# Con SSE attivo gli aggiornamenti arrivano in <1s appena il backend riceve MQTT.
 SCAN_INTERVAL = timedelta(seconds=30)
 
 
@@ -44,43 +42,41 @@ class DiyHomeRuntimeData:
     sse_task: asyncio.Task | None = None
 
 
-def _oauth_implementation(
-    hass: HomeAssistant,
-) -> DiyHomeLocalOAuth2Implementation:
-    """Crea l'implementazione OAuth2 con relay my.home-assistant.io forzato."""
-    return DiyHomeLocalOAuth2Implementation(
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up DiyHome — registra l'implementazione OAuth2 standard HA."""
+    config_entry_oauth2_flow.async_register_implementation(
         hass,
         DOMAIN,
-        OAUTH2_CLIENT_ID,
-        OAUTH2_CLIENT_SECRET,
-        OAUTH2_AUTHORIZE,
-        OAUTH2_TOKEN,
+        config_entry_oauth2_flow.LocalOAuth2Implementation(
+            hass,
+            DOMAIN,
+            OAUTH2_CLIENT_ID,
+            OAUTH2_CLIENT_SECRET,
+            OAUTH2_AUTHORIZE,
+            OAUTH2_TOKEN,
+        ),
     )
-
-
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up DiyHome."""
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DiyHome from a config entry."""
-    implementation = _oauth_implementation(hass)
+    implementation = (
+        await config_entry_oauth2_flow.async_get_config_entry_implementation(
+            hass, entry
+        )
+    )
     session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
     client = DiyHomeApiClient(session)
 
     coordinator = DiyHomeCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
 
-    # ── Pattern moderno: entry.runtime_data invece di hass.data[DOMAIN] ───────
     runtime_data = DiyHomeRuntimeData(coordinator=coordinator, client=client)
     entry.runtime_data = runtime_data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # ── SSE listener real-time ─────────────────────────────────────────────────
-    # Task long-running che ascolta /api/ha/stream e triggera coordinator.refresh
-    # istantaneamente al posto di aspettare il poll a 30s.
     sse_task = hass.async_create_task(
         _listen_sse(hass, entry, coordinator, session),
         name=f"diyhome_sse_{entry.entry_id}",
@@ -94,7 +90,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     runtime_data: DiyHomeRuntimeData = entry.runtime_data
 
-    # Cancella il task SSE prima di fare unload
     sse_task = runtime_data.sse_task
     if sse_task and not sse_task.done():
         sse_task.cancel()
@@ -112,24 +107,12 @@ async def _listen_sse(
     coordinator: "DiyHomeCoordinator",
     session: config_entry_oauth2_flow.OAuth2Session,
 ) -> None:
-    """Long-running task SSE: riceve push real-time dal backend DiyHome.
-
-    Il backend chiama haSSEPushDeviceUpdate() ogni volta che publishHaStates()
-    viene eseguita (su MQTT telemetry, comando HA, ecc.).
-    Alla ricezione di "device_update", il coordinator si aggiorna immediatamente
-    invece di aspettare il poll a 30s.
-
-    Debounce lato client: max 1 async_request_refresh() per uid per 0.3s.
-    Il backend fa già debounce 100ms sui push SSE, ma questo secondo livello
-    protegge da burst multipli di telemetria che arrivano comunque in rapida
-    successione (es. valve ACK + shadow + stato).
-    """
+    """Long-running task SSE: riceve push real-time dal backend DiyHome."""
     stream_url = f"{CLOUD_URL}/api/ha/stream"
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
 
-    # Debounce: mappa uid → timestamp ultimo refresh (epoch float)
     _last_refresh: dict[str, float] = {}
-    _MIN_REFRESH_INTERVAL = 0.3  # secondi
+    _MIN_REFRESH_INTERVAL = 0.3
 
     while True:
         try:
@@ -195,13 +178,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             always_update=False,
         )
         self.client = client
-        # Traccia lo stato online dei device per loggare le transizioni (log-when-unavailable)
         self._online_states: dict[str, bool] = {}
         self._whoami_logged = False
 
     async def _async_update_data(self) -> dict:
         try:
-            # ── Diagnostica whoami (una sola volta al primo avvio) ────────────
             if not self._whoami_logged:
                 try:
                     whoami = await self.client.whoami()
@@ -229,7 +210,6 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 uids,
             )
 
-            # ── log-when-unavailable: logga transizioni online/offline ───────
             for uid, device in devices.items():
                 online = device.get("online", False)
                 was_online = self._online_states.get(uid)
