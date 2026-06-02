@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conectar DiyHome",
+        "description": "Introduce tus credenciales de DiyHome.",
+        "data": {
+          "email": "Correo electrónico",
+          "password": "Contraseña"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Correo electrónico o contraseña incorrectos.",
+      "cannot_connect": "No se puede conectar a DiyHome. Comprueba tu conexión a internet.",
+      "unknown": "Error inesperado. Consulta los registros de Home Assistant."
+    },
+    "abort": {
+      "already_configured": "DiyHome ya está configurado."
+    },
+    "create_entry": {
+      "default": "DiyHome conectado correctamente. Tus dispositivos ya están disponibles en Home Assistant."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "En línea" },
+      "alarm": { "name": "Alarma" },
+      "irrigation_active": { "name": "Riego en curso" }
+    },
+    "sensor": {
+      "tank_level": { "name": "Nivel del depósito" },
+      "tank_liters": { "name": "Volumen del depósito" },
+      "temperature": { "name": "Temperatura" },
+      "flow_in_rate": { "name": "Caudal de entrada" },
+      "flow_out_rate": { "name": "Caudal de salida" },
+      "daily_consumption_in": { "name": "Entrada hoy" },
+      "daily_consumption_out": { "name": "Salida hoy" },
+      "zone_timer": { "name": "{zone_name} tiempo restante" }
+    },
+    "switch": {
+      "valve": { "name": "Válvula {number}" }
+    }
+  }
+}
