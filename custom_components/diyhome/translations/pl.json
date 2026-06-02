@@ -26,7 +26,8 @@
     "binary_sensor": {
       "online": { "name": "Online" },
       "alarm": { "name": "Alarm" },
-      "irrigation_active": { "name": "Nawadnianie aktywne" }
+      "irrigation_active": { "name": "Nawadnianie aktywne" },
+      "pump_relay": { "name": "Przekaźnik pompy" }
     },
     "sensor": {
       "tank_level": { "name": "Poziom zbiornika" },
@@ -36,10 +37,17 @@
       "flow_out_rate": { "name": "Przepływ wyjściowy" },
       "daily_consumption_in": { "name": "Dzisiejszy dopływ" },
       "daily_consumption_out": { "name": "Dzisiejszy odpływ" },
-      "zone_timer": { "name": "{zone_name} pozostały czas" }
+      "zone_timer": { "name": "{zone_name} pozostały czas" },
+      "signal_strength": { "name": "Siła sygnału" },
+      "uptime": { "name": "Czas pracy" },
+      "firmware_version": { "name": "Wersja oprogramowania" },
+      "wifi_network": { "name": "Sieć Wi-Fi" },
+      "ip_address": { "name": "Adres IP" },
+      "pump_mode": { "name": "Tryb pompy" }
     },
     "switch": {
-      "valve": { "name": "Zawór {number}" }
+      "valve": { "name": "Zawór {number}" },
+      "pump_enabled": { "name": "Pompa" }
     }
   }
 }
