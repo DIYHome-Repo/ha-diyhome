@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "DiyHome verbinden",
+        "description": "Gib deine DiyHome-Anmeldedaten ein.",
+        "data": {
+          "email": "E-Mail",
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Falsche E-Mail oder falsches Passwort.",
+      "cannot_connect": "Verbindung zu DiyHome nicht möglich. Überprüfe deine Internetverbindung.",
+      "unknown": "Unerwarteter Fehler. Überprüfe die Home Assistant Logs."
+    },
+    "abort": {
+      "already_configured": "DiyHome ist bereits konfiguriert."
+    },
+    "create_entry": {
+      "default": "DiyHome erfolgreich verbunden. Deine Geräte sind jetzt in Home Assistant verfügbar."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "alarm": { "name": "Alarm" },
+      "irrigation_active": { "name": "Bewässerung läuft" }
+    },
+    "sensor": {
+      "tank_level": { "name": "Tankfüllstand" },
+      "tank_liters": { "name": "Tankvolumen" },
+      "temperature": { "name": "Temperatur" },
+      "flow_in_rate": { "name": "Zulaufrate" },
+      "flow_out_rate": { "name": "Ablaufrate" },
+      "daily_consumption_in": { "name": "Heutiger Eingang" },
+      "daily_consumption_out": { "name": "Heutiger Ausgang" },
+      "zone_timer": { "name": "{zone_name} verbleibende Zeit" }
+    },
+    "switch": {
+      "valve": { "name": "Ventil {number}" }
+    }
+  }
+}
