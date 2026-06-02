@@ -1,4 +1,4 @@
-"""Switch platform — valvola principale, valvola 2, zone irrigazione."""
+"""Switch platform — valvola principale, valvola 2, zone irrigazione, pompa."""
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
-from .entity import DiyHomeEntity, SUB_DEVICE_IRRIGATION
+from .entity import DiyHomeEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ async def async_setup_entry(
             entities.append(
                 DiyHomeZoneSwitch(coordinator, client, uid, zone["index"], zone["name"])
             )
+        if device.get("pump") is not None:
+            entities.append(DiyHomePumpSwitch(coordinator, client, uid))
 
     async_add_entities(entities)
 
@@ -92,9 +94,8 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
 
 class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
-    """Zona irrigazione — sub-device Irrigation."""
+    """Zona irrigazione."""
 
-    _sub_device = SUB_DEVICE_IRRIGATION
     _attr_icon = "mdi:sprinkler-variant"
 
     def __init__(
@@ -160,3 +161,59 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._optimistic_is_on = False
         self.async_write_ha_state()
         await self._client.send_zone_command(self._uid, self._zone_index, False)
+
+
+class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
+    """Abilita/disabilita pompa (AUTO_ENABLE ↔ FORCED_DISABLED)."""
+
+    _attr_translation_key = "pump_enabled"
+    _attr_icon = "mdi:pump"
+
+    def __init__(self, coordinator: DiyHomeCoordinator, client, uid: str) -> None:
+        super().__init__(coordinator, uid)
+        self._client = client
+        self._attr_unique_id = f"{uid}_pump_enabled"
+        self._optimistic_is_on: bool | None = None
+
+    @property
+    def is_on(self) -> bool | None:
+        if self._optimistic_is_on is not None:
+            return self._optimistic_is_on
+        pump = self._device_data.get("pump")
+        if pump is None:
+            return None
+        return pump.get("mode") == "AUTO_ENABLE"
+
+    @property
+    def available(self) -> bool:
+        pump = self._device_data.get("pump")
+        if pump is None:
+            return False
+        return (
+            super().available
+            and self._device_data.get("online", False)
+            and pump.get("mode") not in ("SERVICE_MODE", "PUMP_LOCKED")
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        self._optimistic_is_on = None
+        super()._handle_coordinator_update()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        pump = self._device_data.get("pump", {})
+        return {
+            "mode": pump.get("mode"),
+            "is_locked": pump.get("is_locked", False),
+            "relay_on": pump.get("relay_on"),
+        }
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._optimistic_is_on = True
+        self.async_write_ha_state()
+        await self._client.send_command(self._uid, "pump_enable")
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._optimistic_is_on = False
+        self.async_write_ha_state()
+        await self._client.send_command(self._uid, "pump_disable")
