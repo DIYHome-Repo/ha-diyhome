@@ -1,4 +1,4 @@
-"""Binary sensor platform — online, allarme, irrigazione attiva."""
+"""Binary sensor platform — online, allarme, irrigazione attiva, relè pompa."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
-from .entity import DiyHomeEntity, SUB_DEVICE_IRRIGATION
+from .entity import DiyHomeEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,10 +29,12 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
 
     entities: list[BinarySensorEntity] = []
-    for uid in coordinator.data:
+    for uid, device in coordinator.data.items():
         entities.append(DiyHomeOnlineSensor(coordinator, uid))
         entities.append(DiyHomeAlarmSensor(coordinator, uid))
         entities.append(DiyHomeIrrigationActiveSensor(coordinator, uid))
+        if device.get("pump") is not None:
+            entities.append(DiyHomePumpRelaySensor(coordinator, uid))
     async_add_entities(entities)
 
 
@@ -70,9 +72,8 @@ class DiyHomeAlarmSensor(DiyHomeEntity, BinarySensorEntity):
 
 
 class DiyHomeIrrigationActiveSensor(DiyHomeEntity, BinarySensorEntity):
-    """Almeno una zona irrigazione è aperta — irrigation sub-device."""
+    """Almeno una zona irrigazione è aperta."""
 
-    _sub_device = SUB_DEVICE_IRRIGATION
     _attr_translation_key = "irrigation_active"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:sprinkler"
@@ -99,3 +100,33 @@ class DiyHomeIrrigationActiveSensor(DiyHomeEntity, BinarySensorEntity):
             if z.get("is_active")
         ]
         return {"active_zones": active_zones, "count": len(active_zones)}
+
+
+class DiyHomePumpRelaySensor(DiyHomeEntity, BinarySensorEntity):
+    """Stato fisico relè pompa — diagnostica."""
+
+    _attr_translation_key = "pump_relay"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:pump"
+
+    def __init__(self, coordinator: DiyHomeCoordinator, uid: str) -> None:
+        super().__init__(coordinator, uid)
+        self._attr_unique_id = f"{uid}_pump_relay"
+
+    @property
+    def is_on(self) -> bool:
+        pump = self._device_data.get("pump", {})
+        return bool(pump.get("relay_on", False))
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._device_data.get("pump") is not None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        pump = self._device_data.get("pump", {})
+        return {
+            "mode": pump.get("mode"),
+            "is_locked": pump.get("is_locked", False),
+        }
