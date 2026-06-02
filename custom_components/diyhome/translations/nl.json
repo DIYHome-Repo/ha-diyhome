@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "DiyHome verbinden",
+        "description": "Voer je DiyHome-accountgegevens in.",
+        "data": {
+          "email": "E-mail",
+          "password": "Wachtwoord"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Onjuist e-mailadres of wachtwoord.",
+      "cannot_connect": "Kan geen verbinding maken met DiyHome. Controleer je internetverbinding.",
+      "unknown": "Onverwachte fout. Controleer de Home Assistant-logboeken."
+    },
+    "abort": {
+      "already_configured": "DiyHome is al geconfigureerd."
+    },
+    "create_entry": {
+      "default": "DiyHome succesvol verbonden. Je apparaten zijn nu beschikbaar in Home Assistant."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "Online" },
+      "alarm": { "name": "Alarm" },
+      "irrigation_active": { "name": "Beregening actief" }
+    },
+    "sensor": {
+      "tank_level": { "name": "Tankpeil" },
+      "tank_liters": { "name": "Tankvolume" },
+      "temperature": { "name": "Temperatuur" },
+      "flow_in_rate": { "name": "Instroomsnelheid" },
+      "flow_out_rate": { "name": "Uitstroomsnelheid" },
+      "daily_consumption_in": { "name": "Huidig verbruik in" },
+      "daily_consumption_out": { "name": "Huidig verbruik uit" },
+      "zone_timer": { "name": "{zone_name} resterende tijd" }
+    },
+    "switch": {
+      "valve": { "name": "Klep {number}" }
+    }
+  }
+}
