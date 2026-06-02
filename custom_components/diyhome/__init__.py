@@ -21,6 +21,10 @@ from .config_flow import DiyHomeLocalOAuth2Implementation
 from .const import (
     CLOUD_URL,
     DOMAIN,
+    OAUTH2_AUTHORIZE,
+    OAUTH2_CLIENT_ID,
+    OAUTH2_CLIENT_SECRET,
+    OAUTH2_TOKEN,
     PLATFORMS,
 )
 
@@ -40,11 +44,11 @@ class DiyHomeRuntimeData:
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up DiyHome — registra l'implementazione OAuth2 standard HA."""
+    """Set up DiyHome — registra l'implementazione OAuth2 relay-cloud."""
     config_entry_oauth2_flow.async_register_implementation(
         hass,
         DOMAIN,
-        config_entry_oauth2_flow.LocalOAuth2Implementation(
+        DiyHomeLocalOAuth2Implementation(
             hass,
             DOMAIN,
             OAUTH2_CLIENT_ID,
