@@ -1,4 +1,4 @@
-"""Binary sensor platform — online, allarme, zone attive."""
+"""Binary sensor platform — online, allarme, irrigazione attiva."""
 from __future__ import annotations
 
 import logging
@@ -13,11 +13,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
-from .entity import DiyHomeEntity
+from .entity import DiyHomeEntity, SUB_DEVICE_IRRIGATION
 
 _LOGGER = logging.getLogger(__name__)
 
-# 0 = nessun limite, appropriato per entità basate su coordinator
 PARALLEL_UPDATES = 0
 
 
@@ -30,19 +29,15 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
 
     entities: list[BinarySensorEntity] = []
-    for uid, device in coordinator.data.items():
+    for uid in coordinator.data:
         entities.append(DiyHomeOnlineSensor(coordinator, uid))
         entities.append(DiyHomeAlarmSensor(coordinator, uid))
         entities.append(DiyHomeIrrigationActiveSensor(coordinator, uid))
-        for zone in device.get("zones", []):
-            entities.append(
-                DiyHomeZoneActiveSensor(coordinator, uid, zone["index"], zone["name"])
-            )
     async_add_entities(entities)
 
 
 class DiyHomeOnlineSensor(DiyHomeEntity, BinarySensorEntity):
-    """Connettività device — True = online."""
+    """Connettività device — device principale, diagnostica."""
 
     _attr_translation_key = "online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
@@ -59,7 +54,7 @@ class DiyHomeOnlineSensor(DiyHomeEntity, BinarySensorEntity):
 
 
 class DiyHomeAlarmSensor(DiyHomeEntity, BinarySensorEntity):
-    """Allarme attivo — True = anomalia rilevata (perdita d'acqua, ecc.)."""
+    """Allarme attivo — anomalia rilevata. Device principale."""
 
     _attr_translation_key = "alarm"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -75,8 +70,9 @@ class DiyHomeAlarmSensor(DiyHomeEntity, BinarySensorEntity):
 
 
 class DiyHomeIrrigationActiveSensor(DiyHomeEntity, BinarySensorEntity):
-    """Almeno una zona irrigazione è aperta."""
+    """Almeno una zona irrigazione è aperta — irrigation sub-device."""
 
+    _sub_device = SUB_DEVICE_IRRIGATION
     _attr_translation_key = "irrigation_active"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:sprinkler"
@@ -98,55 +94,8 @@ class DiyHomeIrrigationActiveSensor(DiyHomeEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         active_zones = [
-            z.get("name") or f"Zona {z.get('index', 0) + 1}"
+            z.get("name") or f"Zone {z.get('index', 0) + 1}"
             for z in self._device_data.get("zones", [])
             if z.get("is_active")
         ]
         return {"active_zones": active_zones, "count": len(active_zones)}
-
-
-class DiyHomeZoneActiveSensor(DiyHomeEntity, BinarySensorEntity):
-    """Stato attivo di una singola zona irrigazione."""
-
-    _attr_device_class = BinarySensorDeviceClass.RUNNING
-
-    def __init__(
-        self,
-        coordinator: DiyHomeCoordinator,
-        uid: str,
-        zone_index: int,
-        zone_name: str,
-    ) -> None:
-        super().__init__(coordinator, uid)
-        self._zone_index = zone_index
-        self._zone_name = zone_name
-        self._attr_unique_id = f"{uid}_zone_{zone_index}_active"
-        self._attr_icon = "mdi:sprinkler-variant"
-
-    @property
-    def name(self) -> str:
-        zone = self._get_zone()
-        return f"{zone.get('name') or self._zone_name} — Attiva"
-
-    def _get_zone(self) -> dict:
-        for z in self._device_data.get("zones", []):
-            if z.get("index") == self._zone_index:
-                return z
-        return {}
-
-    @property
-    def is_on(self) -> bool:
-        return self._get_zone().get("is_active", False)
-
-    @property
-    def available(self) -> bool:
-        return super().available and self._device_data.get("online", False)
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        zone = self._get_zone()
-        return {
-            "zone_index": self._zone_index,
-            "zone_type": zone.get("type", "sprinkler"),
-            "minutes_remaining": zone.get("minutes_remaining"),
-        }
