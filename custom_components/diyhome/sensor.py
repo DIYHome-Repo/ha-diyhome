@@ -1,4 +1,4 @@
-"""Sensor platform — cisterna, temperatura, portata, consumo, zone, sensori multipli."""
+"""Sensor platform — cisterna, temperatura, portata, consumo, diagnostica, pompa."""
 from __future__ import annotations
 
 import logging
@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     EntityCategory,
     PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfTemperature,
     UnitOfTime,
     UnitOfVolume,
@@ -24,7 +25,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
-from .entity import DiyHomeEntity, SUB_DEVICE_TANK, SUB_DEVICE_IRRIGATION
+from .entity import DiyHomeEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,8 +38,8 @@ class DiyHomeSensorDescription(SensorEntityDescription):
     available_fn: Callable[[dict], bool] = field(default=lambda d: True)
 
 
-# ── Sensori cisterna/portata — tank sub-device ─────────────────────────────
-TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
+# ── Sensori principali (Sensors section) ──────────────────────────────────────
+MAIN_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
     DiyHomeSensorDescription(
         key="tank_level",
         translation_key="tank_level",
@@ -73,7 +74,6 @@ TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
             and d.get("tank", {}).get("temperature") is not None
         ),
     ),
-    # ── Portata — diagnostica ──────────────────────────────────────────────
     DiyHomeSensorDescription(
         key="flow_in_rate",
         translation_key="flow_in_rate",
@@ -81,7 +81,6 @@ TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:water-pump",
-        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: d.get("flow", {}).get("flow_in_rate") if d.get("flow") else None,
         available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
     ),
@@ -92,11 +91,9 @@ TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:water-pump",
-        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: d.get("flow", {}).get("flow_out_rate") if d.get("flow") else None,
         available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
     ),
-    # ── Consumo giornaliero — diagnostica ──────────────────────────────────
     DiyHomeSensorDescription(
         key="daily_consumption_in",
         translation_key="daily_consumption_in",
@@ -104,7 +101,6 @@ TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:water-plus",
-        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: (
             d.get("consumption_today", {}).get("liters_in")
             if d.get("consumption_today") else None
@@ -122,7 +118,6 @@ TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:water-minus",
-        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: (
             d.get("consumption_today", {}).get("liters_out")
             if d.get("consumption_today") else None
@@ -132,6 +127,76 @@ TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
             and d.get("consumption_today") is not None
             and d.get("consumption_today", {}).get("liters_out") is not None
         ),
+    ),
+)
+
+# ── Sensori diagnostici (Diagnostics section) ─────────────────────────────────
+DIAGNOSTIC_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
+    DiyHomeSensorDescription(
+        key="signal_strength",
+        translation_key="signal_strength",
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:wifi",
+        value_fn=lambda d: d.get("diagnostics", {}).get("rssi"),
+        available_fn=lambda d: d.get("diagnostics", {}).get("rssi") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="uptime",
+        translation_key="uptime",
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:clock-outline",
+        value_fn=lambda d: d.get("diagnostics", {}).get("uptime"),
+        available_fn=lambda d: d.get("diagnostics", {}).get("uptime") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="firmware_version",
+        translation_key="firmware_version",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:chip",
+        value_fn=lambda d: d.get("firmware"),
+        available_fn=lambda d: d.get("firmware") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="wifi_network",
+        translation_key="wifi_network",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:wifi-settings",
+        value_fn=lambda d: d.get("diagnostics", {}).get("ssid") or None,
+        available_fn=lambda d: bool(d.get("diagnostics", {}).get("ssid")),
+    ),
+    DiyHomeSensorDescription(
+        key="ip_address",
+        translation_key="ip_address",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:ip-network",
+        value_fn=lambda d: d.get("diagnostics", {}).get("ip_address") or None,
+        available_fn=lambda d: bool(d.get("diagnostics", {}).get("ip_address")),
+    ),
+    DiyHomeSensorDescription(
+        key="pump_mode",
+        translation_key="pump_mode",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:pump",
+        value_fn=lambda d: d.get("pump", {}).get("mode") if d.get("pump") else None,
+        available_fn=lambda d: d.get("pump") is not None,
     ),
 )
 
@@ -146,7 +211,10 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
     for uid, device in coordinator.data.items():
-        for description in TANK_SENSOR_TYPES:
+        for description in MAIN_SENSOR_TYPES:
+            entities.append(DiyHomeSensor(coordinator, uid, description))
+
+        for description in DIAGNOSTIC_SENSOR_TYPES:
             entities.append(DiyHomeSensor(coordinator, uid, description))
 
         for ts in device.get("temp_sensors", []):
@@ -163,9 +231,8 @@ async def async_setup_entry(
 
 
 class DiyHomeSensor(DiyHomeEntity, SensorEntity):
-    """Sensore cisterna/portata — tank sub-device."""
+    """Sensore generico basato su description."""
 
-    _sub_device = SUB_DEVICE_TANK
     entity_description: DiyHomeSensorDescription
 
     def __init__(
@@ -188,9 +255,8 @@ class DiyHomeSensor(DiyHomeEntity, SensorEntity):
 
 
 class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
-    """Sensore temperatura aggiuntivo (multi-sonda) — tank sub-device."""
+    """Sensore temperatura aggiuntivo (multi-sonda DS18B20)."""
 
-    _sub_device = SUB_DEVICE_TANK
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -240,9 +306,8 @@ class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
 
 
 class DiyHomeZoneTimeSensor(DiyHomeEntity, SensorEntity):
-    """Minuti rimanenti alla chiusura automatica di una zona — irrigation sub-device."""
+    """Minuti rimanenti alla chiusura automatica di una zona — diagnostica."""
 
-    _sub_device = SUB_DEVICE_IRRIGATION
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:timer-outline"
