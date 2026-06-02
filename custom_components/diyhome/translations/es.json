@@ -26,7 +26,8 @@
     "binary_sensor": {
       "online": { "name": "En línea" },
       "alarm": { "name": "Alarma" },
-      "irrigation_active": { "name": "Riego en curso" }
+      "irrigation_active": { "name": "Riego en curso" },
+      "pump_relay": { "name": "Relé de la bomba" }
     },
     "sensor": {
       "tank_level": { "name": "Nivel del depósito" },
@@ -36,10 +37,17 @@
       "flow_out_rate": { "name": "Caudal de salida" },
       "daily_consumption_in": { "name": "Entrada hoy" },
       "daily_consumption_out": { "name": "Salida hoy" },
-      "zone_timer": { "name": "{zone_name} tiempo restante" }
+      "zone_timer": { "name": "{zone_name} tiempo restante" },
+      "signal_strength": { "name": "Potencia de la señal" },
+      "uptime": { "name": "Tiempo de actividad" },
+      "firmware_version": { "name": "Versión de firmware" },
+      "wifi_network": { "name": "Red Wi-Fi" },
+      "ip_address": { "name": "Dirección IP" },
+      "pump_mode": { "name": "Modo de la bomba" }
     },
     "switch": {
-      "valve": { "name": "Válvula {number}" }
+      "valve": { "name": "Válvula {number}" },
+      "pump_enabled": { "name": "Bomba" }
     }
   }
 }
