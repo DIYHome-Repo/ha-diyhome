@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import logging
 
+import aiohttp
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.config_entry_oauth2_flow import OAuth2Session
 
 from .const import CLOUD_URL
 
@@ -14,31 +17,40 @@ API_BASE = f"{CLOUD_URL}/api/ha"
 
 
 class DiyHomeApiClient:
-    """Async REST client — usa OAuth2Session per token auto-refresh."""
+    """Client REST aiohttp — autentica con Bearer token long-lived."""
 
-    def __init__(self, session: OAuth2Session) -> None:
-        self._session = session
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self._hass = hass
+        self._entry = entry
+
+    def _headers(self) -> dict:
+        token = self._entry.data.get("access_token", "")
+        return {"Authorization": f"Bearer {token}"}
 
     async def _get(self, path: str) -> dict:
-        resp = await self._session.async_request(
-            "GET",
-            f"{API_BASE}{path}",
-        )
-        if resp.status in (401, 403):
-            raise ConfigEntryAuthFailed("DiyHome token non valido o scaduto")
-        resp.raise_for_status()
-        return await resp.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{API_BASE}{path}",
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise ConfigEntryAuthFailed("DiyHome token non valido o scaduto")
+                resp.raise_for_status()
+                return await resp.json()
 
     async def _post(self, path: str, json_data: dict) -> dict:
-        resp = await self._session.async_request(
-            "POST",
-            f"{API_BASE}{path}",
-            json=json_data,
-        )
-        if resp.status in (401, 403):
-            raise ConfigEntryAuthFailed("DiyHome token non valido o scaduto")
-        resp.raise_for_status()
-        return await resp.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{API_BASE}{path}",
+                headers=self._headers(),
+                json=json_data,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise ConfigEntryAuthFailed("DiyHome token non valido o scaduto")
+                resp.raise_for_status()
+                return await resp.json()
 
     async def whoami(self) -> dict:
         """Diagnostica: restituisce userId, email e tutti i device."""
