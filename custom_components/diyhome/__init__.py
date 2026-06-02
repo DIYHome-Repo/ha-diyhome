@@ -17,13 +17,10 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
+from .config_flow import DiyHomeLocalOAuth2Implementation
 from .const import (
     CLOUD_URL,
     DOMAIN,
-    OAUTH2_AUTHORIZE,
-    OAUTH2_CLIENT_ID,
-    OAUTH2_CLIENT_SECRET,
-    OAUTH2_TOKEN,
     PLATFORMS,
 )
 
