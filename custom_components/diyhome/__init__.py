@@ -2,35 +2,27 @@
 from __future__ import annotations
 
 import asyncio
+import aiohttp
 from dataclasses import dataclass
 import json
 import logging
 import time
 from datetime import timedelta
 
-from aiohttp import ClientResponseError
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import DiyHomeApiClient
-from .config_flow import DiyHomeLocalOAuth2Implementation
+from .api import DiyHomeApiClient, CLOUD_CALLBACK_URI
 from .const import (
     CLOUD_URL,
     DOMAIN,
-    OAUTH2_AUTHORIZE,
-    OAUTH2_CLIENT_ID,
-    OAUTH2_CLIENT_SECRET,
-    OAUTH2_TOKEN,
     PLATFORMS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Polling di fallback — il coordinator si aggiorna ogni 30s anche senza SSE.
 SCAN_INTERVAL = timedelta(seconds=30)
 
 
@@ -43,33 +35,9 @@ class DiyHomeRuntimeData:
     sse_task: asyncio.Task | None = None
 
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up DiyHome — registra l'implementazione OAuth2 relay-cloud."""
-    config_entry_oauth2_flow.async_register_implementation(
-        hass,
-        DOMAIN,
-        DiyHomeLocalOAuth2Implementation(
-            hass,
-            DOMAIN,
-            OAUTH2_CLIENT_ID,
-            OAUTH2_CLIENT_SECRET,
-            OAUTH2_AUTHORIZE,
-            OAUTH2_TOKEN,
-        ),
-    )
-    return True
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DiyHome from a config entry."""
-    implementation = (
-        await config_entry_oauth2_flow.async_get_config_entry_implementation(
-            hass, entry
-        )
-    )
-    session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
-    client = DiyHomeApiClient(session)
-
+    client = DiyHomeApiClient(hass, entry)
     coordinator = DiyHomeCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
 
@@ -79,7 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     sse_task = hass.async_create_task(
-        _listen_sse(hass, entry, coordinator, session),
+        _listen_sse(hass, entry, coordinator),
         name=f"diyhome_sse_{entry.entry_id}",
     )
     runtime_data.sse_task = sse_task
@@ -106,7 +74,6 @@ async def _listen_sse(
     hass: HomeAssistant,
     entry: ConfigEntry,
     coordinator: "DiyHomeCoordinator",
-    session: config_entry_oauth2_flow.OAuth2Session,
 ) -> None:
     """Long-running task SSE: riceve push real-time dal backend DiyHome."""
     stream_url = f"{CLOUD_URL}/api/ha/stream"
@@ -117,44 +84,48 @@ async def _listen_sse(
 
     while True:
         try:
-            resp = await session.async_request("GET", stream_url)
-            _LOGGER.debug("DiyHome SSE: connesso (HTTP %s)", resp.status)
+            access_token = entry.data["token"]["access_token"]
+            headers = {"Authorization": f"Bearer {access_token}"}
 
-            current_event: str | None = None
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    stream_url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=None, connect=15),
+                ) as resp:
+                    _LOGGER.debug("DiyHome SSE: connesso (HTTP %s)", resp.status)
 
-            async for raw_line in resp.content:
-                line = raw_line.decode("utf-8").strip()
+                    if resp.status in (401, 403):
+                        _LOGGER.warning("DiyHome SSE: token non valido, retry in 60s")
+                        await asyncio.sleep(60)
+                        continue
 
-                if not line or line.startswith(":"):
-                    current_event = None
-                    continue
+                    current_event: str | None = None
 
-                if line.startswith("event:"):
-                    current_event = line[6:].strip()
-                    continue
+                    async for raw_line in resp.content:
+                        line = raw_line.decode("utf-8").strip()
 
-                if line.startswith("data:") and current_event == "device_update":
-                    try:
-                        payload = json.loads(line[5:].strip())
-                        uid = payload.get("uid")
-                        if uid:
-                            now = time.monotonic()
-                            last = _last_refresh.get(uid, 0.0)
-                            if now - last >= _MIN_REFRESH_INTERVAL:
-                                _last_refresh[uid] = now
-                                _LOGGER.debug(
-                                    "DiyHome SSE: device_update uid=%s → refresh", uid
-                                )
-                                await coordinator.async_request_refresh()
-                            else:
-                                _LOGGER.debug(
-                                    "DiyHome SSE: device_update uid=%s → debounced (%.2fs fa)",
-                                    uid,
-                                    now - last,
-                                )
-                    except (json.JSONDecodeError, Exception):
-                        pass
-                    current_event = None
+                        if not line or line.startswith(":"):
+                            current_event = None
+                            continue
+
+                        if line.startswith("event:"):
+                            current_event = line[6:].strip()
+                            continue
+
+                        if line.startswith("data:") and current_event == "device_update":
+                            try:
+                                payload = json.loads(line[5:].strip())
+                                uid = payload.get("uid")
+                                if uid:
+                                    now = time.monotonic()
+                                    last = _last_refresh.get(uid, 0.0)
+                                    if now - last >= _MIN_REFRESH_INTERVAL:
+                                        _last_refresh[uid] = now
+                                        await coordinator.async_request_refresh()
+                            except (json.JSONDecodeError, Exception):
+                                pass
+                            current_event = None
 
         except asyncio.CancelledError:
             _LOGGER.debug("DiyHome SSE: task cancellato")
@@ -230,13 +201,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
             return devices
 
-        except ClientResponseError as err:
-            if err.status in (401, 403):
-                raise ConfigEntryAuthFailed(
-                    "DiyHome OAuth token non valido o scaduto"
-                ) from err
-            raise UpdateFailed(
-                f"DiyHome API HTTP error {err.status}: {err.message}"
-            ) from err
+        except ConfigEntryAuthFailed:
+            raise
         except Exception as err:
             raise UpdateFailed(f"DiyHome API error: {err}") from err
