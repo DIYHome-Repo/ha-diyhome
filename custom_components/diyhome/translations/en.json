@@ -1,20 +1,22 @@
 {
   "config": {
     "step": {
-      "pick_implementation": {
-        "title": "Connect DIYHome"
+      "user": {
+        "title": "Connect DIYHome",
+        "description": "Enter your DiyHome account credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
       }
     },
+    "error": {
+      "invalid_auth": "Incorrect email or password.",
+      "cannot_connect": "Unable to connect to DiyHome. Check your internet connection.",
+      "unknown": "Unexpected error. Check Home Assistant logs."
+    },
     "abort": {
-      "already_configured": "DIYHome is already configured.",
-      "missing_configuration": "No OAuth2 configuration found.",
-      "authorize_url_fail": "Failed to generate the authorization URL.",
-      "no_url_available": "Home Assistant does not have an external URL configured.",
-      "oauth_error": "OAuth2 authorization failed. Please try again.",
-      "oauth_unauthorized": "Authorization denied.",
-      "oauth_timeout": "Authorization timed out.",
-      "oauth_failed": "Could not connect to DIYHome.",
-      "user_rejected_authorization": "You denied access to DIYHome."
+      "already_configured": "DIYHome is already configured."
     },
     "create_entry": {
       "default": "DIYHome connected successfully. Your devices are now available in Home Assistant."
