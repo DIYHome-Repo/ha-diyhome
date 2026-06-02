@@ -8,24 +8,13 @@ import time
 from dataclasses import dataclass
 from datetime import timedelta
 
-from homeassistant.components.application_credentials import (
-    ClientCredential,
-    async_import_client_credential,
-)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient
-from .const import (
-    CLOUD_URL,
-    DOMAIN,
-    OAUTH2_CLIENT_ID,
-    OAUTH2_CLIENT_SECRET,
-    PLATFORMS,
-)
+from .const import CLOUD_URL, DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,39 +30,9 @@ class DiyHomeRuntimeData:
     sse_task: asyncio.Task | None = None
 
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Pre-importa le credenziali OAuth2 nel sistema application_credentials di HA.
-
-    HA 2025+ richiede che le credenziali vengano registrate tramite
-    async_import_client_credential (sistema application_credentials),
-    non più tramite async_register_implementation.
-    Questo evita che HA mostri il form per inserire client_id/secret.
-    """
-    await async_import_client_credential(
-        hass,
-        DOMAIN,
-        ClientCredential(
-            client_id=OAUTH2_CLIENT_ID,
-            client_secret=OAUTH2_CLIENT_SECRET,
-        ),
-    )
-    return True
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DiyHome from a config entry."""
-    try:
-        implementation = (
-            await config_entry_oauth2_flow.async_get_config_entry_implementation(
-                hass, entry
-            )
-        )
-    except Exception as err:
-        _LOGGER.error("DiyHome: impossibile ottenere OAuth2 implementation: %s", err)
-        raise ConfigEntryNotReady("OAuth2 implementation non disponibile") from err
-
-    session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
-    client = DiyHomeApiClient(session)
+    client = DiyHomeApiClient(hass, entry)
     coordinator = DiyHomeCoordinator(hass, client)
 
     try:
@@ -89,7 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     sse_task = hass.async_create_task(
-        _listen_sse(hass, entry, coordinator, session),
+        _listen_sse(hass, entry, coordinator),
         name=f"diyhome_sse_{entry.entry_id}",
     )
     runtime_data.sse_task = sse_task
@@ -116,12 +75,13 @@ async def _listen_sse(
     hass: HomeAssistant,
     entry: ConfigEntry,
     coordinator: "DiyHomeCoordinator",
-    session: config_entry_oauth2_flow.OAuth2Session,
 ) -> None:
     """Long-running task SSE: riceve push real-time dal backend DiyHome."""
     import aiohttp
 
     stream_url = f"{CLOUD_URL}/api/ha/stream"
+    token = entry.data.get("access_token", "")
+    headers = {"Authorization": f"Bearer {token}"}
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
 
     _last_refresh: dict[str, float] = {}
@@ -129,10 +89,6 @@ async def _listen_sse(
 
     while True:
         try:
-            await session.async_ensure_token_valid()
-            access_token = entry.data["token"]["access_token"]
-            headers = {"Authorization": f"Bearer {access_token}"}
-
             async with aiohttp.ClientSession() as http_session:
                 async with http_session.get(
                     stream_url,
@@ -142,9 +98,8 @@ async def _listen_sse(
                     _LOGGER.debug("DiyHome SSE: connesso (HTTP %s)", resp.status)
 
                     if resp.status in (401, 403):
-                        _LOGGER.warning("DiyHome SSE: token non valido, retry in 60s")
-                        await asyncio.sleep(60)
-                        continue
+                        _LOGGER.warning("DiyHome SSE: token non valido, SSE disabilitato")
+                        return
 
                     current_event: str | None = None
 
@@ -209,7 +164,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                         whoami.get("userId"),
                         whoami.get("email"),
                         [
-                            f"{d.get('name')}(uid={d.get('device_uid')},claimed={d.get('claimed_at')},ok={d.get('visibileInHA')})"
+                            f"{d.get('name')}(uid={d.get('device_uid')},ok={d.get('visibileInHA')})"
                             for d in whoami.get("allDevices", [])
                         ],
                     )
