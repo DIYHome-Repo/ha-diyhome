@@ -76,7 +76,7 @@ async def _listen_sse(
     entry: ConfigEntry,
     coordinator: "DiyHomeCoordinator",
 ) -> None:
-    """Long-running task SSE: riceve push real-time dal backend DiyHome."""
+    """Long-running task SSE: aggiornamento real-time senza polling."""
     import aiohttp
 
     stream_url = f"{CLOUD_URL}/api/ha/stream"
@@ -84,8 +84,9 @@ async def _listen_sse(
     headers = {"Authorization": f"Bearer {token}"}
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
 
+    # Throttle: evita refresh multipli per lo stesso device in breve tempo
     _last_refresh: dict[str, float] = {}
-    _MIN_REFRESH_INTERVAL = 0.3
+    _MIN_INTERVAL = 0.2  # secondi tra due aggiornamenti dello stesso device
 
     while True:
         try:
@@ -118,12 +119,26 @@ async def _listen_sse(
                             try:
                                 payload = json.loads(line[5:].strip())
                                 uid = payload.get("uid")
-                                if uid:
+                                if uid and uid in coordinator.data:
                                     now = time.monotonic()
                                     last = _last_refresh.get(uid, 0.0)
-                                    if now - last >= _MIN_REFRESH_INTERVAL:
+                                    if now - last >= _MIN_INTERVAL:
                                         _last_refresh[uid] = now
-                                        await coordinator.async_request_refresh()
+                                        # Aggiornamento chirurgico: solo il device specifico
+                                        # via GET /state — molto più veloce del refresh globale
+                                        try:
+                                            state = await coordinator.client.get_device_state(uid)
+                                            new_data = dict(coordinator.data)
+                                            new_data[uid] = state
+                                            coordinator.async_set_updated_data(new_data)
+                                        except ConfigEntryAuthFailed:
+                                            return
+                                        except Exception as state_err:
+                                            _LOGGER.debug(
+                                                "DiyHome SSE: get_device_state fallback refresh (%s)",
+                                                state_err,
+                                            )
+                                            await coordinator.async_request_refresh()
                             except (json.JSONDecodeError, Exception):
                                 pass
                             current_event = None
@@ -140,7 +155,7 @@ async def _listen_sse(
 
 
 class DiyHomeCoordinator(DataUpdateCoordinator):
-    """Coordinator che aggiorna i dati device ogni SCAN_INTERVAL (fallback SSE)."""
+    """Coordinator che aggiorna i dati device ogni SCAN_INTERVAL (fallback se SSE non disponibile)."""
 
     def __init__(self, hass: HomeAssistant, client: DiyHomeApiClient) -> None:
         super().__init__(
@@ -176,12 +191,6 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             devices: dict[str, dict] = {
                 d["uid"]: d for d in data.get("devices", []) if d.get("uid")
             }
-            uids = list(devices.keys())
-            _LOGGER.debug(
-                "DiyHome API returned %d device(s): %s",
-                len(devices),
-                uids,
-            )
 
             for uid, device in devices.items():
                 online = device.get("online", False)
