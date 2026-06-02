@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from homeassistant.helpers.config_entry_oauth2_flow import (
     AbstractOAuth2FlowHandler,
@@ -13,31 +14,55 @@ from .const import DOMAIN, OAUTH2_AUTHORIZE, OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SEC
 
 _LOGGER = logging.getLogger(__name__)
 
-# Relay Nabu Casa — Universal Link registrato dall'app HA iOS.
-# Quando SFSafariViewController naviga su questo dominio, iOS intercetta
-# tramite Universal Links e passa il codice OAuth direttamente all'app HA
-# senza che il browser debba raggiungere l'URL locale di HA.
-# Funziona sia per istanze HTTP che HTTPS, sia in LAN che in remoto.
+# Relay Nabu Casa — fallback per istanze senza external_url HTTPS.
 _MY_REDIRECT = "https://my.home-assistant.io/redirect/oauth"
+
+# Path callback standard di HA per OAuth2 esterno.
+_HA_CALLBACK_PATH = "/auth/external/callback"
+
+
+def _is_local_address(url: str) -> bool:
+    """Restituisce True se l'URL punta a un indirizzo locale/mDNS."""
+    try:
+        hostname = urlparse(url).hostname or ""
+    except Exception:
+        return True
+    return (
+        hostname.endswith(".local")
+        or hostname in ("localhost", "127.0.0.1", "::1")
+        or hostname.startswith("192.168.")
+        or hostname.startswith("10.")
+        or (hostname.startswith("172.") and any(
+            hostname.startswith(f"172.{i}.") for i in range(16, 32)
+        ))
+    )
 
 
 class DiyHomeLocalOAuth2Implementation(LocalOAuth2Implementation):
-    """Forza sempre il relay my.home-assistant.io come redirect_uri.
+    """Sceglie il redirect_uri ottimale in base alla configurazione HA.
 
-    Senza questo override, istanze HTTP usano l'URL locale HA
-    (es. http://homeassistant.local:8123/auth/external/callback).
-    Quell'URL non è raggiungibile da SFSafariViewController su iOS
-    (mDNS .local non funziona nel sandbox del browser), causando la
-    pagina di errore 'data:' di Safari e poi 'Sei disconnesso' nell'app.
-
-    Con my.home-assistant.io, l'app iOS HA intercetta via Universal Links
-    e gestisce il callback direttamente — il browser non deve mai
-    raggiungere l'URL locale di HA.
+    Strategia:
+    - Se HA ha una external_url HTTPS (DuckDNS, Nabu Casa, dominio custom):
+        usa {external_url}/auth/external/callback direttamente.
+        Il browser (desktop o mobile) raggiunge sempre questo URL senza
+        dipendere da localStorage di my.home-assistant.io.
+    - Altrimenti (solo URL locale / mDNS .local / IP privato):
+        usa my.home-assistant.io come relay.
+        Evita il problema mDNS in SFSafariViewController su iOS
+        (http://homeassistant.local:8123 non risolve nel sandbox Safari).
     """
 
     @property
     def redirect_uri(self) -> str:
-        """Usa sempre il relay my.home-assistant.io (Universal Links iOS)."""
+        """Seleziona il redirect_uri in base al tipo di URL HA."""
+        external_url: str | None = getattr(self.hass.config, "external_url", None)
+
+        if external_url and external_url.startswith("https://") and not _is_local_address(external_url):
+            clean = external_url.rstrip("/")
+            _LOGGER.debug("DiyHome OAuth: redirect diretto a %s%s", clean, _HA_CALLBACK_PATH)
+            return f"{clean}{_HA_CALLBACK_PATH}"
+
+        _LOGGER.debug("DiyHome OAuth: nessuna external_url HTTPS, uso relay my.home-assistant.io")
         return _MY_REDIRECT
 
 
