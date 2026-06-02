@@ -24,11 +24,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
-from .entity import DiyHomeEntity
+from .entity import DiyHomeEntity, SUB_DEVICE_TANK, SUB_DEVICE_IRRIGATION
 
 _LOGGER = logging.getLogger(__name__)
 
-# 0 = nessun limite, appropriato per entità basate su coordinator
 PARALLEL_UPDATES = 0
 
 
@@ -38,8 +37,8 @@ class DiyHomeSensorDescription(SensorEntityDescription):
     available_fn: Callable[[dict], bool] = field(default=lambda d: True)
 
 
-SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
-    # ── Cisterna ──────────────────────────────────────────────────────────────
+# ── Sensori cisterna/portata — tank sub-device ─────────────────────────────
+TANK_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
     DiyHomeSensorDescription(
         key="tank_level",
         translation_key="tank_level",
@@ -68,14 +67,13 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:thermometer",
         value_fn=lambda d: d.get("tank", {}).get("temperature") if d.get("tank") else None,
-        # FIX: bool(0.0) == False → usare is not None per non escludere temperatura 0°C
         available_fn=lambda d: (
             d.get("online", False)
             and d.get("tank") is not None
             and d.get("tank", {}).get("temperature") is not None
         ),
     ),
-    # ── Portata ───────────────────────────────────────────────────────────────
+    # ── Portata — diagnostica ──────────────────────────────────────────────
     DiyHomeSensorDescription(
         key="flow_in_rate",
         translation_key="flow_in_rate",
@@ -83,6 +81,7 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:water-pump",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: d.get("flow", {}).get("flow_in_rate") if d.get("flow") else None,
         available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
     ),
@@ -93,10 +92,11 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:water-pump",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: d.get("flow", {}).get("flow_out_rate") if d.get("flow") else None,
         available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
     ),
-    # ── Consumo giornaliero ───────────────────────────────────────────────────
+    # ── Consumo giornaliero — diagnostica ──────────────────────────────────
     DiyHomeSensorDescription(
         key="daily_consumption_in",
         translation_key="daily_consumption_in",
@@ -104,6 +104,7 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:water-plus",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: (
             d.get("consumption_today", {}).get("liters_in")
             if d.get("consumption_today") else None
@@ -121,6 +122,7 @@ SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:water-minus",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: (
             d.get("consumption_today", {}).get("liters_out")
             if d.get("consumption_today") else None
@@ -144,7 +146,7 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
     for uid, device in coordinator.data.items():
-        for description in SENSOR_TYPES:
+        for description in TANK_SENSOR_TYPES:
             entities.append(DiyHomeSensor(coordinator, uid, description))
 
         for ts in device.get("temp_sensors", []):
@@ -161,6 +163,9 @@ async def async_setup_entry(
 
 
 class DiyHomeSensor(DiyHomeEntity, SensorEntity):
+    """Sensore cisterna/portata — tank sub-device."""
+
+    _sub_device = SUB_DEVICE_TANK
     entity_description: DiyHomeSensorDescription
 
     def __init__(
@@ -172,7 +177,6 @@ class DiyHomeSensor(DiyHomeEntity, SensorEntity):
         super().__init__(coordinator, uid)
         self.entity_description = description
         self._attr_unique_id = f"{uid}_{description.key}"
-        # translation_key è già impostato nella description — HA usa quello per il nome
 
     @property
     def native_value(self) -> float | str | None:
@@ -184,8 +188,9 @@ class DiyHomeSensor(DiyHomeEntity, SensorEntity):
 
 
 class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
-    """Sensore temperatura aggiuntivo (multi-sonda)."""
+    """Sensore temperatura aggiuntivo (multi-sonda) — tank sub-device."""
 
+    _sub_device = SUB_DEVICE_TANK
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -205,7 +210,7 @@ class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
 
     @property
     def name(self) -> str:
-        return f"Temperatura {self._sensor_name}"
+        return self._sensor_name
 
     def _get_sensor(self) -> dict:
         for ts in self._device_data.get("temp_sensors", []):
@@ -235,12 +240,14 @@ class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
 
 
 class DiyHomeZoneTimeSensor(DiyHomeEntity, SensorEntity):
-    """Minuti rimanenti alla chiusura automatica di una zona irrigazione."""
+    """Minuti rimanenti alla chiusura automatica di una zona — irrigation sub-device."""
 
+    _sub_device = SUB_DEVICE_IRRIGATION
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:timer-outline"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "zone_timer"
 
     def __init__(
         self,
@@ -255,9 +262,10 @@ class DiyHomeZoneTimeSensor(DiyHomeEntity, SensorEntity):
         self._attr_unique_id = f"{uid}_zone_{zone_index}_remaining"
 
     @property
-    def name(self) -> str:
+    def translation_placeholders(self) -> dict:
         zone = self._get_zone()
-        return f"{zone.get('name') or self._zone_name} — Tempo rimanente"
+        name = zone.get("name") or self._zone_name or f"Zone {self._zone_index + 1}"
+        return {"zone_name": name}
 
     def _get_zone(self) -> dict:
         for z in self._device_data.get("zones", []):
