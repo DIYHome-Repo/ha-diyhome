@@ -5,6 +5,7 @@ import logging
 from typing import Any
 import urllib.parse
 
+from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.config_entry_oauth2_flow import (
     AbstractOAuth2FlowHandler,
     LocalOAuth2Implementation,
@@ -60,6 +61,20 @@ class DiyHomeLocalOAuth2Implementation(LocalOAuth2Implementation):
         return url
 
 
+def _get_or_register_implementation(hass) -> DiyHomeLocalOAuth2Implementation:
+    """Registra l'implementazione OAuth2 se non ancora presente e la restituisce."""
+    impl = DiyHomeLocalOAuth2Implementation(
+        hass,
+        DOMAIN,
+        OAUTH2_CLIENT_ID,
+        OAUTH2_CLIENT_SECRET,
+        OAUTH2_AUTHORIZE,
+        OAUTH2_TOKEN,
+    )
+    config_entry_oauth2_flow.async_register_implementation(hass, DOMAIN, impl)
+    return impl
+
+
 class DiyHomeOAuth2FlowHandler(
     AbstractOAuth2FlowHandler,
     domain=DOMAIN,
@@ -76,9 +91,14 @@ class DiyHomeOAuth2FlowHandler(
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Avvia il flow OAuth2."""
+        """Avvia il flow OAuth2, assicurandosi che l'implementazione sia registrata."""
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
+
+        # Registra l'implementazione OAuth2 ora — async_setup potrebbe non
+        # essere ancora stato chiamato per integrazioni puramente config-flow.
+        _get_or_register_implementation(self.hass)
+
         return await self.async_step_auth()
 
     async def async_oauth_create_entry(self, data: dict) -> dict:
