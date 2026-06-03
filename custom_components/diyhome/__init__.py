@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.2.5 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.2.6 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
@@ -344,48 +344,57 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
                     _LOGGER.debug("DiyHome LAN SSE: connesso")
                     current_event: str | None = None
+                    # FIX P6: line buffer — aiohttp restituisce chunk HTTP, non righe.
+                    # Se il server invia "event: ha_state\ndata: {...}\n\n" in un unico
+                    # res.write(), aiohttp lo consegna come un chunk singolo con \n embedded.
+                    # Senza buffer, il parser vedeva "event: ha_state\ndata: {...}" come
+                    # nome evento → current_event spazzatura → ogni evento SSE veniva scartato.
+                    _sse_buf = b""
 
-                    async for raw_line in resp.content:
+                    async for raw_chunk in resp.content:
                         if self._stopping:
                             return
 
-                        line = raw_line.decode("utf-8").strip()
+                        _sse_buf += raw_chunk
+                        while b"\n" in _sse_buf:
+                            raw_line, _sse_buf = _sse_buf.split(b"\n", 1)
+                            line = raw_line.decode("utf-8", errors="replace").strip()
 
-                        if not line or line.startswith(":"):
-                            current_event = None
-                            continue
+                            if not line or line.startswith(":"):
+                                current_event = None
+                                continue
 
-                        if line.startswith("event:"):
-                            current_event = line[6:].strip()
-                            continue
+                            if line.startswith("event:"):
+                                current_event = line[6:].strip()
+                                continue
 
-                        if line.startswith("data:") and current_event in _LAN_REALTIME_EVENTS:
-                            try:
-                                payload = json.loads(line[5:].strip())
-                                uid = payload.get("uid")
-                                if uid and self.data and uid in self.data:
-                                    # FIX P4: verifica payload completo prima di aggiornare.
-                                    # Un payload parziale (es. solo valve1) sovrascriverebbe
-                                    # tank, zones, flow, diagnostics con dati mancanti.
-                                    _COMPLETE_KEYS = ("valve1", "tank", "zones", "pump", "flow")
-                                    is_complete = any(k in payload for k in _COMPLETE_KEYS)
-                                    if is_complete:
-                                        new_data = dict(self.data)
-                                        new_data[uid] = _norm_lan_state(payload)
-                                        self._update_from_lan(new_data)
-                                    else:
-                                        # Payload parziale: ricarica stato completo dal firmware
-                                        try:
-                                            full = await self.lan_client.get_ha_state()
-                                            if full:
-                                                new_data = dict(self.data)
-                                                new_data[uid] = _norm_lan_state({**full, "uid": uid})
-                                                self._update_from_lan(new_data)
-                                        except Exception:
-                                            pass
-                            except Exception as parse_err:
-                                _LOGGER.debug("DiyHome LAN SSE parse: %s", parse_err)
-                            current_event = None
+                            if line.startswith("data:") and current_event in _LAN_REALTIME_EVENTS:
+                                try:
+                                    payload = json.loads(line[5:].strip())
+                                    uid = payload.get("uid")
+                                    if uid and self.data and uid in self.data:
+                                        # FIX P4: verifica payload completo prima di aggiornare.
+                                        # Un payload parziale (es. solo valve1) sovrascriverebbe
+                                        # tank, zones, flow, diagnostics con dati mancanti.
+                                        _COMPLETE_KEYS = ("valve1", "tank", "zones", "pump", "flow")
+                                        is_complete = any(k in payload for k in _COMPLETE_KEYS)
+                                        if is_complete:
+                                            new_data = dict(self.data)
+                                            new_data[uid] = _norm_lan_state(payload)
+                                            self._update_from_lan(new_data)
+                                        else:
+                                            # Payload parziale: ricarica stato completo dal firmware
+                                            try:
+                                                full = await self.lan_client.get_ha_state()
+                                                if full:
+                                                    new_data = dict(self.data)
+                                                    new_data[uid] = _norm_lan_state({**full, "uid": uid})
+                                                    self._update_from_lan(new_data)
+                                            except Exception:
+                                                pass
+                                except Exception as parse_err:
+                                    _LOGGER.debug("DiyHome LAN SSE parse: %s", parse_err)
+                                current_event = None
 
             except asyncio.CancelledError:
                 return
@@ -510,50 +519,56 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
                     _LOGGER.debug("DiyHome cloud SSE: connesso (lan_mode=%s)", self.lan_mode)
                     current_event: str | None = None
+                    # FIX P6: stessa correzione del LAN SSE — line buffer per gestire
+                    # chunk HTTP multi-riga inviati in un unico res.write() dal backend.
+                    _sse_buf = b""
 
-                    async for raw_line in resp.content:
+                    async for raw_chunk in resp.content:
                         if self._stopping:
                             return
 
-                        line = raw_line.decode("utf-8").strip()
+                        _sse_buf += raw_chunk
+                        while b"\n" in _sse_buf:
+                            raw_line, _sse_buf = _sse_buf.split(b"\n", 1)
+                            line = raw_line.decode("utf-8", errors="replace").strip()
 
-                        if not line or line.startswith(":"):
-                            current_event = None
-                            continue
+                            if not line or line.startswith(":"):
+                                current_event = None
+                                continue
 
-                        if line.startswith("event:"):
-                            current_event = line[6:].strip()
-                            continue
+                            if line.startswith("event:"):
+                                current_event = line[6:].strip()
+                                continue
 
-                        if line.startswith("data:") and current_event in _CLOUD_REALTIME_EVENTS:
-                            try:
-                                # FIX P5 anti-stale: se un update LAN è avvenuto < 2s fa,
-                                # l'evento cloud potrebbe portare stato precedente al comando
-                                # (race: HA→LAN cmd → cloud SSE ritardato con stato vecchio).
-                                if self.lan_mode and (time.monotonic() - self._lan_last_update) < 2.0:
-                                    current_event = None
-                                    continue
-                                payload = json.loads(line[5:].strip())
-                                uid = payload.get("uid")
-                                if uid and self.data and uid in self.data:
-                                    embedded = payload.get("state")
-                                    if embedded:
-                                        new_data = dict(self.data)
-                                        new_data[uid] = _norm_cloud_state(embedded)
-                                        self.async_set_updated_data(new_data)
-                                    else:
-                                        try:
-                                            state = await self.client.get_device_state(uid)
+                            if line.startswith("data:") and current_event in _CLOUD_REALTIME_EVENTS:
+                                try:
+                                    # FIX P5 anti-stale: se un update LAN è avvenuto < 2s fa,
+                                    # l'evento cloud potrebbe portare stato precedente al comando
+                                    # (race: HA→LAN cmd → cloud SSE ritardato con stato vecchio).
+                                    if self.lan_mode and (time.monotonic() - self._lan_last_update) < 2.0:
+                                        current_event = None
+                                        continue
+                                    payload = json.loads(line[5:].strip())
+                                    uid = payload.get("uid")
+                                    if uid and self.data and uid in self.data:
+                                        embedded = payload.get("state")
+                                        if embedded:
                                             new_data = dict(self.data)
-                                            new_data[uid] = _norm_cloud_state(state)
+                                            new_data[uid] = _norm_cloud_state(embedded)
                                             self.async_set_updated_data(new_data)
-                                        except ConfigEntryAuthFailed:
-                                            return
-                                        except Exception:
-                                            await self.async_request_refresh()
-                            except Exception:
-                                pass
-                            current_event = None
+                                        else:
+                                            try:
+                                                state = await self.client.get_device_state(uid)
+                                                new_data = dict(self.data)
+                                                new_data[uid] = _norm_cloud_state(state)
+                                                self.async_set_updated_data(new_data)
+                                            except ConfigEntryAuthFailed:
+                                                return
+                                            except Exception:
+                                                await self.async_request_refresh()
+                                except Exception:
+                                    pass
+                                current_event = None
 
             except asyncio.CancelledError:
                 return
