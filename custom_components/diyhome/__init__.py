@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.0.5 con MQTT locale + fallback REST/SSE."""
+"""DiyHome integration for Home Assistant — v2.0.6 con MQTT locale + fallback REST/SSE."""
 from __future__ import annotations
 
 import asyncio
@@ -52,34 +52,162 @@ def _first_not_none(src: dict, *keys):
 
 
 def _norm_tank(payload: dict) -> dict:
-    """Normalizza payload tank MQTT → device['tank'] atteso da sensor.py."""
+    """Normalizza payload tank MQTT → device['tank'] atteso da sensor.py.
+
+    Supporta sia il payload del firmware WT-1 (chiavi: perc, litri, ds18b20.tempC)
+    sia il payload del backend cloud (chiavi: level_pct, liters, temperature).
+    """
+    # Temperatura: firmware usa ds18b20.tempC (oggetto nidificato) o tempC flat
+    temp = None
+    ds18b20 = payload.get("ds18b20")
+    if isinstance(ds18b20, dict):
+        temp = _first_not_none(ds18b20, "tempC")
+    if temp is None:
+        temp = _first_not_none(payload, "temperature", "temp", "ambientTemp", "tempC")
     return {
-        "level_pct":   _first_not_none(payload, "level_pct", "percentage", "level"),
-        "liters":      _first_not_none(payload, "liters", "volume"),
-        "temperature": _first_not_none(payload, "temperature", "temp", "ambientTemp"),
+        "level_pct":   _first_not_none(payload, "perc", "level_pct", "percentage", "level"),
+        "liters":      _first_not_none(payload, "litri", "liters", "volume"),
+        "temperature": temp,
     }
 
 
 def _norm_flow(payload: dict) -> dict:
-    """Normalizza payload flow MQTT → device['flow'] atteso da sensor.py."""
+    """Normalizza payload flow MQTT → device['flow'] atteso da sensor.py.
+
+    Supporta sia firmware WT-1 (chiavi: flowInRate_L_min, flowOutRate_L_min)
+    sia backend cloud (chiavi: flow_in_rate, flow_out_rate).
+    """
     return {
-        "flow_in_rate":  _first_not_none(payload, "flow_in_rate", "in", "flowIn", "flow_in"),
-        "flow_out_rate": _first_not_none(payload, "flow_out_rate", "out", "flowOut", "flow_out"),
+        "flow_in_rate":  _first_not_none(
+            payload, "flowInRate_L_min", "flow_in_rate", "in", "flowIn", "flow_in"
+        ),
+        "flow_out_rate": _first_not_none(
+            payload, "flowOutRate_L_min", "flow_out_rate", "out", "flowOut", "flow_out"
+        ),
     }
 
 
 def _norm_diagnostics(existing: dict, payload: dict) -> dict:
-    """Fonde payload heartbeat nei diagnostics → device['diagnostics']."""
+    """Fonde payload nei diagnostics → device['diagnostics'].
+
+    Supporta sia firmware WT-1 (wifiRSSI, ip, wifiSSID) sia cloud/heartbeat (rssi, ssid).
+    """
     diag = dict(existing or {})
     wifi = payload.get("wifi", {}) if isinstance(payload.get("wifi"), dict) else {}
-    updates = {
-        "rssi":       _first_not_none(payload, "rssi") if "rssi" in payload else _first_not_none(wifi, "rssi"),
-        "uptime":     _first_not_none(payload, "uptime"),
-        "ssid":       _first_not_none(payload, "ssid") if "ssid" in payload else _first_not_none(wifi, "ssid"),
-        "ip_address": _first_not_none(payload, "ip", "ip_address") if ("ip" in payload or "ip_address" in payload) else _first_not_none(wifi, "ip"),
-    }
+    rssi = (_first_not_none(payload, "wifiRSSI", "rssi_dbm", "rssi")
+            if any(k in payload for k in ("wifiRSSI", "rssi_dbm", "rssi"))
+            else _first_not_none(wifi, "rssi"))
+    ssid = (_first_not_none(payload, "ssid", "wifiSSID")
+            if any(k in payload for k in ("ssid", "wifiSSID"))
+            else _first_not_none(wifi, "ssid"))
+    ip   = (_first_not_none(payload, "ip", "ip_address")
+            if any(k in payload for k in ("ip", "ip_address"))
+            else _first_not_none(wifi, "ip"))
+    uptime = _first_not_none(payload, "uptime")
+    updates = {"rssi": rssi, "uptime": uptime, "ssid": ssid, "ip_address": ip}
     diag.update({k: v for k, v in updates.items() if v is not None})
     return diag
+
+
+def _apply_state_payload(device: dict, p: dict) -> bool:
+    """Estrae tutti i campi dal payload /state del firmware WT-1 e aggiorna device in-place.
+
+    Il firmware pubblica diyhome/{uid}/state con tank_data::toJsonSafe() — include:
+    valveOpen, valve2Open, perc, litri, ds18b20.tempC, flowInRate_L_min,
+    flowOutRate_L_min, pump_mode, pump_locked, pump_enabled, irrigation.zones,
+    ssid, ip, wifiRSSI, uptime, alarm, alarmLow, alarmHigh.
+
+    Restituisce True se device è stato modificato.
+    """
+    updated = False
+
+    # ── valve1 ─────────────────────────────────────────────────────────────
+    v1_open = _first_not_none(p, "valveOpen", "open", "is_open")
+    if v1_open is not None:
+        valve = dict(device.get("valve1") or {})
+        if valve.get("is_open") != bool(v1_open):
+            valve["is_open"] = bool(v1_open)
+            device["valve1"] = valve
+            updated = True
+
+    # ── valve2 ─────────────────────────────────────────────────────────────
+    v2_open = _first_not_none(p, "valve2Open")
+    if v2_open is not None:
+        valve2 = dict(device.get("valve2") or {})
+        if valve2.get("is_open") != bool(v2_open):
+            valve2["is_open"] = bool(v2_open)
+            device["valve2"] = valve2
+            updated = True
+
+    # ── tank ───────────────────────────────────────────────────────────────
+    tank = _norm_tank(p)
+    if any(v is not None for v in tank.values()):
+        merged = {**dict(device.get("tank") or {}), **{k: v for k, v in tank.items() if v is not None}}
+        device["tank"] = merged
+        updated = True
+
+    # ── flow ───────────────────────────────────────────────────────────────
+    flow = _norm_flow(p)
+    if any(v is not None for v in flow.values()):
+        merged = {**dict(device.get("flow") or {}), **{k: v for k, v in flow.items() if v is not None}}
+        device["flow"] = merged
+        updated = True
+
+    # ── pump ───────────────────────────────────────────────────────────────
+    pump_mode = _first_not_none(p, "pump_mode")
+    if pump_mode is not None:
+        pump = dict(device.get("pump") or {})
+        pump["mode"]      = pump_mode
+        pump["is_locked"] = bool(p.get("pump_locked", pump.get("is_locked", False)))
+        pump["relay_on"]  = bool(p.get("pump_enabled", pump.get("relay_on", False)))
+        device["pump"] = pump
+        updated = True
+
+    # ── irrigation zones ───────────────────────────────────────────────────
+    # Firmware: p["irrigation"]["zones"] = [{index, name, open, type, remainingTime}]
+    irr = p.get("irrigation")
+    if isinstance(irr, dict) and "zones" in irr:
+        raw_zones = irr["zones"]
+        if isinstance(raw_zones, list):
+            zones = []
+            for z in raw_zones:
+                if not isinstance(z, dict):
+                    continue
+                idx = z.get("index")
+                # firmware: "open" (bool) → normalizzato a "is_active"
+                is_active = _first_not_none(z, "open", "is_active", "active")
+                remain_s = z.get("remainingTime", 0) or 0
+                zones.append({
+                    "index":             idx,
+                    "name":              z.get("name", f"Zone {(idx or 0) + 1}"),
+                    "is_active":         bool(is_active) if is_active is not None else False,
+                    "minutes_remaining": round(remain_s / 60) if remain_s else None,
+                    "type":              z.get("type", "sprinkler"),
+                })
+            device["zones"] = zones
+            updated = True
+
+    # ── diagnostics ────────────────────────────────────────────────────────
+    diag_keys_fw = {"ssid", "wifiSSID", "ip", "wifiRSSI", "rssi_dbm", "uptime"}
+    if any(k in p for k in diag_keys_fw):
+        device["diagnostics"] = _norm_diagnostics(device.get("diagnostics"), p)
+        updated = True
+
+    # ── alarms ─────────────────────────────────────────────────────────────
+    if any(k in p for k in ("alarm", "alarmAny", "alarmLow", "alarmHigh")):
+        device["alarms"] = {
+            "any":  bool(p.get("alarm", p.get("alarmAny", False))),
+            "low":  bool(p.get("alarmLow", False)),
+            "high": bool(p.get("alarmHigh", False)),
+        }
+        updated = True
+
+    # ── marca online quando riceviamo /state dal firmware ──────────────────
+    if not device.get("online"):
+        device["online"] = True
+        updated = True
+
+    return updated
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -435,45 +563,63 @@ class DualModeCoordinator(DataUpdateCoordinator):
                     device["online"] = online
                     updated = True
 
-            # ── valve/state ───────────────────────────────────────────────────
-            elif msg_type == "valve" and subtype == "state" and isinstance(payload, dict):
-                valve = dict(device.get("valve1") or {})
-                is_open = payload.get("is_open", payload.get("open", False))
-                if valve.get("is_open") != is_open:
-                    valve["is_open"] = is_open
-                    device["valve1"] = valve
-                    updated = True
+            # ── valve — firmware: diyhome/{uid}/valve ({valveOpen, valve2Open}) ──
+            # Retrocompat: gestisce anche valve/state (backend cloud SSE)
+            elif msg_type == "valve" and isinstance(payload, dict):
+                if not subtype:
+                    # Firmware WT-1: payload con valveOpen + valve2Open in un unico messaggio
+                    v1 = _first_not_none(payload, "valveOpen", "open", "is_open")
+                    v2 = _first_not_none(payload, "valve2Open")
+                    if v1 is not None:
+                        valve = dict(device.get("valve1") or {})
+                        valve["is_open"] = bool(v1)
+                        device["valve1"] = valve
+                        updated = True
+                    if v2 is not None:
+                        valve2 = dict(device.get("valve2") or {})
+                        valve2["is_open"] = bool(v2)
+                        device["valve2"] = valve2
+                        updated = True
+                elif subtype == "state":
+                    # Retrocompat backend cloud: valve/state con is_open/open
+                    valve = dict(device.get("valve1") or {})
+                    is_open = bool(_first_not_none(payload, "is_open", "open", "valveOpen") or False)
+                    if valve.get("is_open") != is_open:
+                        valve["is_open"] = is_open
+                        device["valve1"] = valve
+                        updated = True
 
-            # ── valve2/state ──────────────────────────────────────────────────
+            # ── valve2/state — retrocompat backend cloud ───────────────────────
             elif msg_type == "valve2" and subtype == "state" and isinstance(payload, dict):
-                valve = dict(device.get("valve2") or {})
-                is_open = payload.get("is_open", payload.get("open", False))
-                if valve.get("is_open") != is_open:
-                    valve["is_open"] = is_open
-                    device["valve2"] = valve
+                valve2 = dict(device.get("valve2") or {})
+                is_open = bool(_first_not_none(payload, "is_open", "open", "valve2Open") or False)
+                if valve2.get("is_open") != is_open:
+                    valve2["is_open"] = is_open
+                    device["valve2"] = valve2
                     updated = True
 
-            # ── telemetry/* ───────────────────────────────────────────────────
+            # ── state — firmware: diyhome/{uid}/state (payload completo) ───────
+            elif msg_type == "state" and not subtype and isinstance(payload, dict):
+                updated = _apply_state_payload(device, payload)
+
+            # ── diagnostic — firmware: diyhome/{uid}/diagnostic ───────────────
+            elif msg_type == "diagnostic" and not subtype and isinstance(payload, dict):
+                device["diagnostics"] = _norm_diagnostics(device.get("diagnostics"), payload)
+                updated = True
+
+            # ── telemetry/* — retrocompat backend cloud ───────────────────────
             elif msg_type == "telemetry":
                 if subtype == "tank" and isinstance(payload, dict):
-                    # Normalizza nella struttura attesa da sensor.py: device["tank"]
                     device["tank"] = _norm_tank(payload)
                     updated = True
-
                 elif subtype == "flow" and isinstance(payload, dict):
-                    # Normalizza nella struttura attesa da sensor.py: device["flow"]
                     device["flow"] = _norm_flow(payload)
                     updated = True
-
                 elif subtype == "heartbeat" and isinstance(payload, dict):
-                    # Heartbeat → mark online + aggiorna diagnostics
                     device["online"] = True
-                    device["diagnostics"] = _norm_diagnostics(
-                        device.get("diagnostics"), payload
-                    )
+                    device["diagnostics"] = _norm_diagnostics(device.get("diagnostics"), payload)
                     if "firmware" in payload:
                         device["firmware"] = payload["firmware"]
-                    # Consumo giornaliero se incluso nell'heartbeat
                     if "liters_in" in payload or "liters_out" in payload:
                         cons = dict(device.get("consumption_today") or {})
                         if "liters_in" in payload:
@@ -483,7 +629,7 @@ class DualModeCoordinator(DataUpdateCoordinator):
                         device["consumption_today"] = cons
                     updated = True
 
-            # ── irrigation/state ──────────────────────────────────────────────
+            # ── irrigation/state — retrocompat backend cloud ──────────────────
             elif msg_type == "irrigation" and subtype == "state":
                 if isinstance(payload, list):
                     device["zones"] = payload
@@ -492,9 +638,13 @@ class DualModeCoordinator(DataUpdateCoordinator):
                     device["zones"] = payload["zones"]
                     updated = True
 
-            # ── pump ─────────────────────────────────────────────────────────
+            # ── pump — retrocompat backend cloud ──────────────────────────────
             elif msg_type == "pump" and not subtype and isinstance(payload, dict):
-                device["pump"] = payload
+                pump = dict(device.get("pump") or {})
+                pump["mode"]      = _first_not_none(payload, "mode", "pump_mode") or pump.get("mode", "AUTO_ENABLE")
+                pump["is_locked"] = bool(payload.get("is_locked", payload.get("pump_locked", pump.get("is_locked", False))))
+                pump["relay_on"]  = bool(payload.get("relay_on", payload.get("pump_enabled", pump.get("relay_on", False))))
+                device["pump"] = pump
                 updated = True
 
             if updated:

@@ -176,9 +176,8 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
                 new_opts[CONF_MQTT_USERNAME] = (user_input.get(CONF_MQTT_USERNAME) or "").strip()
                 new_opts[CONF_MQTT_TLS] = user_input.get(CONF_MQTT_TLS, False)
 
-                pw = (user_input.get(CONF_MQTT_PASSWORD) or "").strip()
-                if pw:
-                    new_opts[CONF_MQTT_PASSWORD] = pw
+                # Salva sempre la password (anche vuota) per permettere clear esplicito
+                new_opts[CONF_MQTT_PASSWORD] = (user_input.get(CONF_MQTT_PASSWORD) or "").strip()
 
                 return self.async_create_entry(data=new_opts)
 
