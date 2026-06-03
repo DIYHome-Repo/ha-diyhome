@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.2.2 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.2.3 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +27,26 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# ── Insiemi di eventi SSE accettati — tolleranti a naming variazioni ──────────
+# FIX P4: cloud SSE accettava solo "device_update"; ora accetta tutti gli eventi
+# che portano stato aggiornato del device, per robustezza futura.
+_CLOUD_REALTIME_EVENTS: frozenset[str] = frozenset({
+    "device_update",
+    "ha_state",
+    "state_update",
+    "valve_update",
+    "irrigation_update",
+    "pump_update",
+})
+
+# FIX P5: LAN SSE accettava solo "ha_state"; ora accetta varianti firmware.
+_LAN_REALTIME_EVENTS: frozenset[str] = frozenset({
+    "ha_state",
+    "device_update",
+    "state_update",
+    "state",
+})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,8 +198,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     async def async_start(self) -> None:
         """Avvia il coordinator: sonda LAN, sceglie modalità."""
-        self._session = aiohttp.ClientSession()
-        self.lan_client.session = self._session
+        # FIX P1: non ricreare la sessione se già esiste (creata in async_setup_entry
+        # prima del primo refresh LAN — evita che get_all_states() riceva session=None)
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+            self.lan_client.session = self._session
 
         lan_ok = await self._probe_lan()
         if lan_ok:
@@ -326,7 +349,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                             current_event = line[6:].strip()
                             continue
 
-                        if line.startswith("data:") and current_event == "ha_state":
+                        if line.startswith("data:") and current_event in _LAN_REALTIME_EVENTS:
                             try:
                                 payload = json.loads(line[5:].strip())
                                 uid = payload.get("uid")
@@ -476,7 +499,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                             current_event = line[6:].strip()
                             continue
 
-                        if line.startswith("data:") and current_event == "device_update":
+                        if line.startswith("data:") and current_event in _CLOUD_REALTIME_EVENTS:
                             try:
                                 payload = json.loads(line[5:].strip())
                                 uid = payload.get("uid")
@@ -592,6 +615,15 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             try:
                 ok = await self.lan_client.send_command(action, payload or {})
                 if ok:
+                    # FIX P8: dopo comando LAN riuscito, aggiorna subito stato HA
+                    # da LAN per confermare lo stato reale invece di aspettare il
+                    # watchdog (10s). Cloud/app sono aggiornati dal firmware via MQTT.
+                    try:
+                        states = await self.lan_client.get_all_states()
+                        if states:
+                            self.async_set_updated_data(states)
+                    except Exception:
+                        pass
                     return True
                 _LOGGER.debug("DiyHome LAN command fallito, fallback cloud")
             except Exception as err:
@@ -635,8 +667,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ).strip()
 
     lan_client = DiyHomeLanClient(mdns_hostname=mdns_hostname)
-
     coordinator = DiyHomeCoordinator(hass, client, lan_client, entry)
+
+    # FIX P1: crea la sessione HTTP PRIMA del primo tentativo LAN.
+    # Senza questo, get_all_states() trovava session=None e restituiva {}
+    # silenziosamente, rendendo l'integrazione non davvero LAN-first.
+    if mdns_hostname:
+        coordinator._session = aiohttp.ClientSession()
+        lan_client.session = coordinator._session
 
     # First refresh: prova LAN via mDNS hostname prima, poi cloud
     if mdns_hostname:
@@ -665,14 +703,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Avvia coordinator (SSE + watchdog + retry)
-    await coordinator.async_start()
-
-    # Fetch LAN JWT per autenticare i comandi HTTP diretti al firmware
-    # Fatto dopo async_start perché la sessione HTTP è già pronta
+    # FIX P2: token LAN fetchato PRIMA di async_start(), così è disponibile
+    # dal primo momento in cui il coordinator inizia ad accettare comandi LAN.
     if mdns_hostname and coordinator.data:
         for uid in list(coordinator.data.keys()):
             await coordinator._fetch_lan_jwt(uid)
+
+    # Avvia coordinator (SSE + watchdog + retry)
+    # async_start() non ricrea la sessione se già esiste (FIX P1 cooperante)
+    await coordinator.async_start()
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
     return True
@@ -685,4 +724,6 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runtime_data: DiyHomeRuntimeData = entry.runtime_data
     await runtime_data.coordinator.async_stop()
+    # FIX P7: chiudi la sessione del cloud client per evitare resource leak
+    await runtime_data.client.close()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
