@@ -1,7 +1,6 @@
 """Switch platform — valvola principale, valvola 2, zone irrigazione, pompa."""
 from __future__ import annotations
 
-import json
 import logging
 
 from homeassistant.components.switch import SwitchEntity
@@ -9,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DualModeCoordinator, DiyHomeRuntimeData
+from . import DiyHomeCoordinator, DiyHomeRuntimeData
 from .entity import DiyHomeEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,38 +23,20 @@ async def async_setup_entry(
 ) -> None:
     runtime_data: DiyHomeRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
-    client = runtime_data.client
 
     entities: list[SwitchEntity] = []
     for uid, device in coordinator.data.items():
-        entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=1))
+        entities.append(DiyHomeValveSwitch(coordinator, uid, valve=1))
         if device.get("valve2") is not None:
-            entities.append(DiyHomeValveSwitch(coordinator, client, uid, valve=2))
+            entities.append(DiyHomeValveSwitch(coordinator, uid, valve=2))
         for zone in device.get("zones", []):
             entities.append(
-                DiyHomeZoneSwitch(coordinator, client, uid, zone["index"], zone["name"])
+                DiyHomeZoneSwitch(coordinator, uid, zone["index"], zone.get("name", ""))
             )
         if device.get("pump") is not None:
-            entities.append(DiyHomePumpSwitch(coordinator, client, uid))
+            entities.append(DiyHomePumpSwitch(coordinator, uid))
 
     async_add_entities(entities)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper: pubblica comando MQTT locale con fallback HTTP
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _mqtt_or_http(coordinator: DualModeCoordinator, topic: str, payload: str) -> bool:
-    """Pubblica su MQTT locale se disponibile, con payload già pronto per il firmware.
-
-    Contratti firmware (topic → payload):
-    - valve/set, valve2/set, irrigation/z{n}/set → stringa "ON" | "OFF"
-    - pump/set → JSON {"mode": "AUTO_ENABLE"} | {"mode": "FORCED_DISABLED"}
-    Vedere mqtt_module.cpp e irrigation_module.cpp del firmware WT-1.
-    """
-    if coordinator.mqtt_mode:
-        return coordinator.mqtt_publish(topic, payload)
-    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,11 +49,8 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
     _attr_icon = "mdi:valve"
     _attr_translation_key = "valve"
 
-    def __init__(
-        self, coordinator: DualModeCoordinator, client, uid: str, valve: int
-    ) -> None:
+    def __init__(self, coordinator: DiyHomeCoordinator, uid: str, valve: int) -> None:
         super().__init__(coordinator, uid)
-        self._client = client
         self._coordinator = coordinator
         self._valve = valve
         self._attr_unique_id = f"{uid}_valve{valve}"
@@ -107,22 +85,14 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs) -> None:
         self._optimistic_is_on = True
         self.async_write_ha_state()
-
-        topic = f"diyhome/{self._uid}/valve{'' if self._valve == 1 else '2'}/set"
-
-        if not _mqtt_or_http(self._coordinator, topic, "ON"):
-            action = f"valve{self._valve}_open" if self._valve == 2 else "valve_open"
-            await self._client.send_command(self._uid, action)
+        action = "valve2_open" if self._valve == 2 else "valve_open"
+        await self._coordinator.async_send_command(self._uid, action)
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
         self.async_write_ha_state()
-
-        topic = f"diyhome/{self._uid}/valve{'' if self._valve == 1 else '2'}/set"
-
-        if not _mqtt_or_http(self._coordinator, topic, "OFF"):
-            action = f"valve{self._valve}_close" if self._valve == 2 else "valve_close"
-            await self._client.send_command(self._uid, action)
+        action = "valve2_close" if self._valve == 2 else "valve_close"
+        await self._coordinator.async_send_command(self._uid, action)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,14 +106,12 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
 
     def __init__(
         self,
-        coordinator: DualModeCoordinator,
-        client,
+        coordinator: DiyHomeCoordinator,
         uid: str,
         zone_index: int,
         zone_name: str,
     ) -> None:
         super().__init__(coordinator, uid)
-        self._client = client
         self._coordinator = coordinator
         self._zone_index = zone_index
         self._zone_name = zone_name
@@ -191,22 +159,16 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs) -> None:
         self._optimistic_is_on = True
         self.async_write_ha_state()
-
-        # Firmware: topic deve includere prefisso 'z' prima dell'indice zona
-        # (irrigation_module.cpp: topic.charAt(prevSlash + 1) == 'z')
-        topic = f"diyhome/{self._uid}/irrigation/z{self._zone_index}/set"
-
-        if not _mqtt_or_http(self._coordinator, topic, "ON"):
-            await self._client.send_zone_command(self._uid, self._zone_index, True)
+        await self._coordinator.async_send_command(
+            self._uid, "zone_open", {"zone_index": self._zone_index}
+        )
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
         self.async_write_ha_state()
-
-        topic = f"diyhome/{self._uid}/irrigation/z{self._zone_index}/set"
-
-        if not _mqtt_or_http(self._coordinator, topic, "OFF"):
-            await self._client.send_zone_command(self._uid, self._zone_index, False)
+        await self._coordinator.async_send_command(
+            self._uid, "zone_close", {"zone_index": self._zone_index}
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,9 +181,8 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
     _attr_translation_key = "pump_enabled"
     _attr_icon = "mdi:pump"
 
-    def __init__(self, coordinator: DualModeCoordinator, client, uid: str) -> None:
+    def __init__(self, coordinator: DiyHomeCoordinator, uid: str) -> None:
         super().__init__(coordinator, uid)
-        self._client = client
         self._coordinator = coordinator
         self._attr_unique_id = f"{uid}_pump_enabled"
         self._optimistic_is_on: bool | None = None
@@ -257,27 +218,15 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
             "mode": pump.get("mode"),
             "is_locked": pump.get("is_locked", False),
             "relay_on": pump.get("relay_on"),
-            "mqtt_local": self._coordinator.mqtt_mode,
+            "lan_mode": self._coordinator.lan_mode,
         }
 
     async def async_turn_on(self, **kwargs) -> None:
         self._optimistic_is_on = True
         self.async_write_ha_state()
-
-        topic = f"diyhome/{self._uid}/pump/set"
-        # Firmware: pump/set si aspetta JSON {"mode": "..."} (mqtt_module.cpp riga 897)
-        # "ON" → AUTO_ENABLE, "OFF" → FORCED_DISABLED
-        payload = json.dumps({"mode": "AUTO_ENABLE"})
-
-        if not _mqtt_or_http(self._coordinator, topic, payload):
-            await self._client.send_command(self._uid, "pump_enable")
+        await self._coordinator.async_send_command(self._uid, "pump_enable")
 
     async def async_turn_off(self, **kwargs) -> None:
         self._optimistic_is_on = False
         self.async_write_ha_state()
-
-        topic = f"diyhome/{self._uid}/pump/set"
-        payload = json.dumps({"mode": "FORCED_DISABLED"})
-
-        if not _mqtt_or_http(self._coordinator, topic, payload):
-            await self._client.send_command(self._uid, "pump_disable")
+        await self._coordinator.async_send_command(self._uid, "pump_disable")

@@ -1,4 +1,4 @@
-"""Config flow DiyHome — email + password + broker MQTT locale opzionale."""
+"""Config flow DiyHome — email + password + IP LAN opzionale."""
 from __future__ import annotations
 
 import logging
@@ -11,13 +11,7 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 
 from .const import (
     CLOUD_URL,
-    CONF_MQTT_ENABLED,
-    CONF_MQTT_HOST,
-    CONF_MQTT_PASSWORD,
-    CONF_MQTT_PORT,
-    CONF_MQTT_TLS,
-    CONF_MQTT_USERNAME,
-    DEFAULT_MQTT_PORT,
+    CONF_DEVICE_IP,
     DOMAIN,
 )
 
@@ -31,24 +25,17 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 
-def _broker_schema(defaults: dict | None = None) -> vol.Schema:
+def _lan_schema(defaults: dict | None = None) -> vol.Schema:
     d = defaults or {}
     return vol.Schema(
         {
-            vol.Optional(CONF_MQTT_ENABLED, default=d.get(CONF_MQTT_ENABLED, False)): bool,
-            vol.Optional(CONF_MQTT_HOST, default=d.get(CONF_MQTT_HOST, "")): str,
-            vol.Optional(CONF_MQTT_PORT, default=d.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)): vol.All(
-                vol.Coerce(int), vol.Range(min=1, max=65535)
-            ),
-            vol.Optional(CONF_MQTT_USERNAME, default=d.get(CONF_MQTT_USERNAME, "")): str,
-            vol.Optional(CONF_MQTT_PASSWORD, default=""): str,
-            vol.Optional(CONF_MQTT_TLS, default=d.get(CONF_MQTT_TLS, False)): bool,
+            vol.Optional(CONF_DEVICE_IP, default=d.get(CONF_DEVICE_IP, "")): str,
         }
     )
 
 
 class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow per DiyHome — autenticazione + broker MQTT locale opzionale."""
+    """Config flow per DiyHome — autenticazione + IP device LAN opzionale."""
 
     VERSION = 1
 
@@ -81,7 +68,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "access_token": data["access_token"],
                                 "email": email,
                             }
-                            return await self.async_step_local_broker()
+                            return await self.async_step_lan()
                         if resp.status in (401, 403):
                             errors["base"] = "invalid_auth"
                         else:
@@ -101,39 +88,25 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_local_broker(
+    async def async_step_lan(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Secondo passo (opzionale): configurazione broker MQTT locale."""
+        """Secondo passo (opzionale): IP device in LAN per modalità locale."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            enabled = user_input.get(CONF_MQTT_ENABLED, False)
-            host = (user_input.get(CONF_MQTT_HOST) or "").strip()
+            device_ip = (user_input.get(CONF_DEVICE_IP) or "").strip()
 
-            if enabled and not host:
-                errors["base"] = "mqtt_host_required"
-            else:
-                options: dict = {
-                    CONF_MQTT_ENABLED: enabled,
-                    CONF_MQTT_HOST: host,
-                    CONF_MQTT_PORT: user_input.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT),
-                    CONF_MQTT_USERNAME: (user_input.get(CONF_MQTT_USERNAME) or "").strip(),
-                    CONF_MQTT_TLS: user_input.get(CONF_MQTT_TLS, False),
-                }
-                pw = (user_input.get(CONF_MQTT_PASSWORD) or "").strip()
-                if pw:
-                    options[CONF_MQTT_PASSWORD] = pw
-
-                return self.async_create_entry(
-                    title=self._entry_data["email"],
-                    data=self._entry_data,
-                    options=options,
-                )
+            options: dict = {CONF_DEVICE_IP: device_ip}
+            return self.async_create_entry(
+                title=self._entry_data["email"],
+                data=self._entry_data,
+                options=options,
+            )
 
         return self.async_show_form(
-            step_id="local_broker",
-            data_schema=_broker_schema(),
+            step_id="lan",
+            data_schema=_lan_schema(),
             errors=errors,
             last_step=True,
         )
@@ -146,7 +119,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow — riconfigura broker MQTT locale senza re-autenticare."""
+    """Options flow — riconfigura IP LAN senza re-autenticare."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -154,35 +127,22 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        return await self.async_step_local_broker(user_input)
+        return await self.async_step_lan(user_input)
 
-    async def async_step_local_broker(
+    async def async_step_lan(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
         errors: dict[str, str] = {}
         current = dict(self._config_entry.options)
 
         if user_input is not None:
-            enabled = user_input.get(CONF_MQTT_ENABLED, False)
-            host = (user_input.get(CONF_MQTT_HOST) or "").strip()
-
-            if enabled and not host:
-                errors["base"] = "mqtt_host_required"
-            else:
-                new_opts = dict(current)
-                new_opts[CONF_MQTT_ENABLED] = enabled
-                new_opts[CONF_MQTT_HOST] = host
-                new_opts[CONF_MQTT_PORT] = user_input.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)
-                new_opts[CONF_MQTT_USERNAME] = (user_input.get(CONF_MQTT_USERNAME) or "").strip()
-                new_opts[CONF_MQTT_TLS] = user_input.get(CONF_MQTT_TLS, False)
-
-                # Salva sempre la password (anche vuota) per permettere clear esplicito
-                new_opts[CONF_MQTT_PASSWORD] = (user_input.get(CONF_MQTT_PASSWORD) or "").strip()
-
-                return self.async_create_entry(data=new_opts)
+            device_ip = (user_input.get(CONF_DEVICE_IP) or "").strip()
+            new_opts = dict(current)
+            new_opts[CONF_DEVICE_IP] = device_ip
+            return self.async_create_entry(data=new_opts)
 
         return self.async_show_form(
-            step_id="local_broker",
-            data_schema=_broker_schema(current),
+            step_id="lan",
+            data_schema=_lan_schema(current),
             errors=errors,
         )

@@ -9,24 +9,18 @@
           "password": "Password"
         }
       },
-      "local_broker": {
-        "title": "Local MQTT Broker (optional)",
-        "description": "If your Home Assistant has the Mosquitto add-on installed on the same network as your device, you can configure direct LAN control. This enables real-time state updates and offline operation. Leave empty to use cloud-only mode.",
+      "lan": {
+        "title": "Local Device IP (optional)",
+        "description": "Enter the local IP address of your DiyHome device (e.g. 192.168.1.50) to enable direct LAN control: real-time state updates, offline operation, and zero-cloud commands. Leave empty to use cloud-only mode.",
         "data": {
-          "mqtt_enabled": "Enable local MQTT",
-          "mqtt_host": "Mosquitto host (IP or hostname)",
-          "mqtt_port": "Port",
-          "mqtt_username": "Username",
-          "mqtt_password": "Password",
-          "mqtt_tls": "Use TLS"
+          "device_ip": "Device IP address"
         }
       }
     },
     "error": {
       "invalid_auth": "Incorrect email or password.",
       "cannot_connect": "Unable to connect to DiyHome. Check your internet connection.",
-      "unknown": "Unexpected error. Check Home Assistant logs.",
-      "mqtt_host_required": "Mosquitto host is required when local MQTT is enabled."
+      "unknown": "Unexpected error. Check Home Assistant logs."
     },
     "abort": {
       "already_configured": "DiyHome is already configured."
@@ -37,22 +31,15 @@
   },
   "options": {
     "step": {
-      "local_broker": {
-        "title": "Local MQTT Broker",
-        "description": "Configure direct LAN control via Mosquitto. Leave empty or disable to use cloud-only mode.",
+      "lan": {
+        "title": "Local Device IP",
+        "description": "Update the local IP address of your DiyHome device. Leave empty to use cloud-only mode.",
         "data": {
-          "mqtt_enabled": "Enable local MQTT",
-          "mqtt_host": "Mosquitto host (IP or hostname)",
-          "mqtt_port": "Port",
-          "mqtt_username": "Username",
-          "mqtt_password": "Password (leave empty to keep existing)",
-          "mqtt_tls": "Use TLS"
+          "device_ip": "Device IP address"
         }
       }
     },
-    "error": {
-      "mqtt_host_required": "Mosquitto host is required when local MQTT is enabled."
-    }
+    "error": {}
   },
   "entity": {
     "binary_sensor": {

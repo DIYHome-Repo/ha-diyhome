@@ -1,14 +1,14 @@
 {
   "domain": "diyhome",
   "name": "DIYHome",
-  "version": "2.0.6",
+  "version": "2.1.0",
   "documentation": "https://diyhome.cloud/docs/integrations/home-assistant",
   "issue_tracker": "https://github.com/DIYHome-Repo/ha-diyhome/issues",
   "codeowners": ["@DIYHome-Repo"],
-  "requirements": ["paho-mqtt>=1.6.1"],
+  "requirements": [],
   "dependencies": [],
   "after_dependencies": [],
-  "iot_class": "cloud_push",
+  "iot_class": "local_push",
   "config_flow": true,
   "integration_type": "hub"
 }
