@@ -30,9 +30,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Regex per rilevare IP puro (es. "192.168.1.248") — usato per avvisi nel retry loop
-_IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
-
 # ── Insiemi di eventi SSE accettati — tolleranti a naming variazioni ──────────
 # FIX P4: cloud SSE accettava solo "device_update"; ora accetta tutti gli eventi
 # che portano stato aggiornato del device, per robustezza futura.
@@ -478,20 +475,6 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 await self._activate_lan_mode()
                 return
             fail_count += 1
-            # Se l'hostname è un IP puro e la probe continua a fallire, l'IP potrebbe
-            # essere cambiato dopo un reset del router. Gli hostname .local si
-            # aggiornano automaticamente via mDNS — gli IP fissi no.
-            # Suggerisci di aggiornare la configurazione via UI.
-            if fail_count % 5 == 0 and _IP_RE.match(self.lan_client.mdns_hostname or ""):
-                _LOGGER.warning(
-                    "DiyHome: la connessione LAN all'IP %s fallisce da %d tentativi. "
-                    "Se il router si è resettato l'IP potrebbe essere cambiato. "
-                    "Vai in Impostazioni → Dispositivi e servizi → DIYHome → Configura "
-                    "per aggiornare l'hostname (puoi inserire il nuovo IP — verrà "
-                    "convertito automaticamente in hostname .local stabile).",
-                    self.lan_client.mdns_hostname,
-                    fail_count,
-                )
 
     # ── Token refresh ─────────────────────────────────────────────────────────
 
@@ -751,10 +734,6 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             cmd_payload.update(payload)
         await self.client.send_command(uid, action, payload or {})
         return True
-
-
-# Alias retrocompat
-DualModeCoordinator = DiyHomeCoordinator
 
 
 # ─────────────────────────────────────────────────────────────────────────────
