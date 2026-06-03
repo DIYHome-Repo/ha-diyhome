@@ -1,4 +1,4 @@
-"""Config flow DiyHome — email + password + zeroconf auto-discovery."""
+"""Config flow DiyHome — email + password + mDNS hostname (opzionale) + zeroconf auto-discovery."""
 from __future__ import annotations
 
 import logging
@@ -18,10 +18,13 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# FIX P1/P2: form manuale ora include hostname mDNS opzionale.
+# Utenti senza zeroconf possono inserirlo manualmente per abilitare LAN mode.
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
+        vol.Optional(CONF_MDNS_HOSTNAME, default=""): str,
     }
 )
 
@@ -47,7 +50,9 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not uid:
             return self.async_abort(reason="no_uid")
 
-        # Previeni duplicati: usa l'UID come unique_id
+        # Previeni duplicati: usa l'UID come unique_id.
+        # Se l'utente aveva già una installazione manuale, _abort_if_unique_id_configured
+        # aggiorna il CONF_MDNS_HOSTNAME su quella voce esistente invece di duplicare.
         await self.async_set_unique_id(uid)
         self._abort_if_unique_id_configured(
             updates={CONF_MDNS_HOSTNAME: hostname}
@@ -100,7 +105,10 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="zeroconf_confirm",
-            data_schema=STEP_USER_SCHEMA,
+            data_schema=vol.Schema({
+                vol.Required(CONF_EMAIL): str,
+                vol.Required(CONF_PASSWORD): str,
+            }),
             description_placeholders={"hostname": self._discovered_hostname},
             errors=errors,
         )
@@ -110,7 +118,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Setup manuale: form email + password."""
+        """Setup manuale: form email + password + hostname mDNS opzionale."""
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
 
@@ -119,6 +127,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email: str = user_input[CONF_EMAIL].strip().lower()
             password: str = user_input[CONF_PASSWORD]
+            mdns_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
 
             try:
                 async with aiohttp.ClientSession() as session:
@@ -129,14 +138,25 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            self._entry_data = {
-                                "access_token": data["access_token"],
-                                "refresh_token": data.get("refresh_token", ""),
-                                "email": email,
-                            }
+                            # FIX P2: recupera UID dal cloud per impostare unique_id.
+                            # Collega questa voce manuale al device — se in futuro lo
+                            # stesso device viene scoperto via zeroconf, HA non duplica.
+                            uid = await self._fetch_first_uid(
+                                session, data["access_token"]
+                            )
+                            if uid:
+                                await self.async_set_unique_id(uid)
+                                self._abort_if_unique_id_configured(
+                                    updates={CONF_MDNS_HOSTNAME: mdns_hostname}
+                                )
                             return self.async_create_entry(
                                 title=email,
-                                data=self._entry_data,
+                                data={
+                                    "access_token": data["access_token"],
+                                    "refresh_token": data.get("refresh_token", ""),
+                                    "email": email,
+                                    CONF_MDNS_HOSTNAME: mdns_hostname,
+                                },
                             )
                         if resp.status in (401, 403):
                             errors["base"] = "invalid_auth"
@@ -156,6 +176,28 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=STEP_USER_SCHEMA,
             errors=errors,
         )
+
+    async def _fetch_first_uid(
+        self, session: aiohttp.ClientSession, token: str
+    ) -> str:
+        """Recupera l'UID del primo device dal cloud per impostare unique_id.
+
+        Se l'utente ha più device, prende solo il primo — la voce manuale copre
+        tutti i device dell'account come nel flow precedente.
+        """
+        try:
+            async with session.get(
+                f"{CLOUD_URL}/api/ha/devices",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    devices = await resp.json()
+                    if isinstance(devices, list) and devices:
+                        return str(devices[0].get("uid", ""))
+        except Exception:
+            pass
+        return ""
 
     @staticmethod
     def async_get_options_flow(
