@@ -1,9 +1,10 @@
-"""DiyHome integration for Home Assistant — v2.2.7 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.2.9 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -28,6 +29,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Regex per rilevare IP puro (es. "192.168.1.248") — usato per avvisi nel retry loop
+_IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 
 # ── Insiemi di eventi SSE accettati — tolleranti a naming variazioni ──────────
 # FIX P4: cloud SSE accettava solo "device_update"; ora accetta tutti gli eventi
@@ -463,6 +467,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     async def _lan_retry_loop(self) -> None:
         """Riprova connessione LAN ogni LAN_RETRY_INTERVAL secondi (in cloud mode)."""
+        fail_count = 0
         while not self._stopping and not self.lan_mode:
             await asyncio.sleep(LAN_RETRY_INTERVAL)
             if self._stopping or self.lan_mode:
@@ -472,6 +477,21 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("DiyHome: LAN tornata disponibile, switch a LAN mode")
                 await self._activate_lan_mode()
                 return
+            fail_count += 1
+            # Se l'hostname è un IP puro e la probe continua a fallire, l'IP potrebbe
+            # essere cambiato dopo un reset del router. Gli hostname .local si
+            # aggiornano automaticamente via mDNS — gli IP fissi no.
+            # Suggerisci di aggiornare la configurazione via UI.
+            if fail_count % 5 == 0 and _IP_RE.match(self.lan_client.mdns_hostname or ""):
+                _LOGGER.warning(
+                    "DiyHome: la connessione LAN all'IP %s fallisce da %d tentativi. "
+                    "Se il router si è resettato l'IP potrebbe essere cambiato. "
+                    "Vai in Impostazioni → Dispositivi e servizi → DIYHome → Configura "
+                    "per aggiornare l'hostname (puoi inserire il nuovo IP — verrà "
+                    "convertito automaticamente in hostname .local stabile).",
+                    self.lan_client.mdns_hostname,
+                    fail_count,
+                )
 
     # ── Token refresh ─────────────────────────────────────────────────────────
 
