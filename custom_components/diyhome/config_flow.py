@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 
 import aiohttp
 import voluptuous as vol
@@ -20,9 +19,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Regex per rilevare IP puro (es. "192.168.1.248")
-_IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
-
 # Form setup — solo email e password, nessun campo IP/hostname
 STEP_USER_SCHEMA = vol.Schema(
     {
@@ -30,44 +26,6 @@ STEP_USER_SCHEMA = vol.Schema(
         vol.Required(CONF_PASSWORD): str,
     }
 )
-
-
-async def _resolve_ip_to_local_hostname(
-    session: aiohttp.ClientSession, host: str
-) -> str:
-    """Se host è un IP puro, interroga /mdns-state sul device per ottenere
-    il nome .local stabile che non cambia dopo reset router.
-
-    Il device espone /mdns-state senza autenticazione (endpoint pubblico).
-    """
-    if not host or not _IP_RE.match(host):
-        return host
-
-    try:
-        async with session.get(
-            f"http://{host}/mdns-state",
-            timeout=aiohttp.ClientTimeout(total=3),
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json(content_type=None)
-                hostname = data.get("hostname", "").strip()
-                if hostname:
-                    resolved = (
-                        hostname
-                        if hostname.endswith(".local")
-                        else f"{hostname}.local"
-                    )
-                    _LOGGER.debug(
-                        "DiyHome: IP %s → hostname mDNS stabile %s", host, resolved
-                    )
-                    return resolved
-    except Exception as err:
-        _LOGGER.debug(
-            "DiyHome: /mdns-state su %s non raggiungibile (%s) — uso IP come fallback",
-            host,
-            err,
-        )
-    return host
 
 
 class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -78,7 +36,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
        - se non trovato: cloud mode (LAN configurabile dopo da "Configura")
     """
 
-    VERSION = 2
+    VERSION = 1
 
     def __init__(self) -> None:
         self._entry_data: dict = {}
@@ -369,20 +327,6 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             new_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
-
-            if new_hostname:
-                async with aiohttp.ClientSession() as session:
-                    resolved = await _resolve_ip_to_local_hostname(
-                        session, new_hostname
-                    )
-                    if resolved != new_hostname:
-                        _LOGGER.info(
-                            "DiyHome options: IP %s convertito automaticamente in %s",
-                            new_hostname,
-                            resolved,
-                        )
-                    new_hostname = resolved
-
             return self.async_create_entry(
                 title="",
                 data={CONF_MDNS_HOSTNAME: new_hostname},
