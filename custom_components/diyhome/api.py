@@ -30,7 +30,6 @@ class DiyHomeApiClient:
         self._session: aiohttp.ClientSession | None = None
 
     def _get_session(self) -> aiohttp.ClientSession:
-        """Restituisce la sessione condivisa, creandola se necessario."""
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
@@ -79,7 +78,6 @@ class DiyHomeApiClient:
         return await self._get(f"/devices/{uid}/state")
 
     async def send_command(self, uid: str, action: str, payload: dict | None = None) -> dict:
-        """Invia comando al cloud con payload opzionale."""
         body: dict = {"action": action}
         if payload:
             body.update(payload)
@@ -94,22 +92,36 @@ class DiyHomeApiClient:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LAN HTTP client — comunicazione diretta col device (zero cloud)
+# LAN HTTP client — comunicazione diretta col device via hostname mDNS
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DiyHomeLanClient:
-    """Client HTTP diretto al device in LAN — /api/v1/ha/* endpoint."""
+    """Client HTTP diretto al device in LAN — usa hostname mDNS (stabile).
 
-    def __init__(self, ip: str) -> None:
-        self.ip = ip.strip() if ip else ""
-        self.session: aiohttp.ClientSession | None = None   # iniettata dal coordinator
+    L'hostname mDNS (es. "DIYHome_WT1_AABBCC.local") è fisso anche quando
+    l'IP cambia dopo riavvio del router. Zero configurazione per l'utente.
+    """
+
+    def __init__(self, mdns_hostname: str) -> None:
+        # mdns_hostname: già include ".local" (es. "DIYHome_WT1_AABBCC.local")
+        # o è vuoto se non disponibile (cloud-only mode)
+        self.mdns_hostname = mdns_hostname.strip() if mdns_hostname else ""
+        self.session: aiohttp.ClientSession | None = None
+
+    @property
+    def ip(self) -> str:
+        """Compatibilità retroattiva — ritorna l'hostname mDNS come 'indirizzo'."""
+        return self.mdns_hostname
 
     def _base(self) -> str:
-        return f"http://{self.ip}"
+        return f"http://{self.mdns_hostname}"
+
+    def is_available(self) -> bool:
+        return bool(self.mdns_hostname)
 
     async def get_ha_state(self) -> dict:
         """GET /api/v1/ha/state — snapshot normalizzato per HA."""
-        if not self.ip or not self.session:
+        if not self.mdns_hostname or not self.session:
             return {}
         async with self.session.get(
             f"{self._base()}/api/v1/ha/state",
@@ -119,27 +131,21 @@ class DiyHomeLanClient:
             return await resp.json()
 
     async def get_all_states(self) -> dict[str, dict] | None:
-        """Scarica stato LAN e restituisce {uid: device_dict}.
-
-        Ritorna None se il device non è raggiungibile.
-        """
+        """Scarica stato LAN e restituisce {uid: device_dict}."""
         try:
             raw = await self.get_ha_state()
             uid = raw.get("uid", "")
             if not uid:
                 return None
-            from . import _norm_lan_state  # importazione locale per evitare circolo
+            from . import _norm_lan_state
             return {uid: _norm_lan_state(raw)}
         except Exception as err:
             _LOGGER.debug("DiyHome LAN get_all_states: %s", err)
             return None
 
     async def send_command(self, action: str, payload: dict | None = None) -> bool:
-        """POST /api/v1/command — stesso dispatcher del cloud, zero latenza.
-
-        Genera un commandId locale per deduplicazione firmware.
-        """
-        if not self.ip or not self.session:
+        """POST /api/v1/command — zero latenza, zero cloud."""
+        if not self.mdns_hostname or not self.session:
             return False
         body = {
             "commandId": str(uuid.uuid4()),

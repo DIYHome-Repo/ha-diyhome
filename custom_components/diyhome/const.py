@@ -6,8 +6,8 @@ PLATFORMS = ["switch", "sensor", "binary_sensor"]
 
 CLOUD_URL = "https://diyhome.cloud"
 
-# Options keys — IP LAN device
-CONF_DEVICE_IP   = "device_ip"   # IP manuale (es. "192.168.1.50"), priorità massima
+# Options keys — hostname mDNS (stabile anche dopo riavvio router)
+CONF_MDNS_HOSTNAME = "mdns_hostname"  # es. "DIYHome_WT1_AABBCC" → .local risolve l'IP corrente
 
 # Intervalli
 LAN_SCAN_INTERVAL   = 10   # secondi watchdog HTTP LAN

@@ -18,7 +18,7 @@ from .api import DiyHomeApiClient, DiyHomeLanClient
 from .const import (
     CLOUD_SCAN_INTERVAL,
     CLOUD_URL,
-    CONF_DEVICE_IP,
+    CONF_MDNS_HOSTNAME,
     DOMAIN,
     LAN_CONNECT_TIMEOUT,
     LAN_RETRY_INTERVAL,
@@ -212,8 +212,8 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     # ── Probe LAN ─────────────────────────────────────────────────────────────
 
     async def _probe_lan(self) -> bool:
-        """Sonda il device via HTTP LAN. Ritorna True se raggiungibile."""
-        if not self.lan_client.ip:
+        """Sonda il device via HTTP LAN (hostname mDNS). Ritorna True se raggiungibile."""
+        if not self.lan_client.is_available():
             return False
         try:
             state = await asyncio.wait_for(
@@ -227,7 +227,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     async def _activate_lan_mode(self) -> None:
         """Avvia LAN SSE push + HTTP watchdog. Cancella cloud tasks."""
-        _LOGGER.info("DiyHome: modalità LAN attiva (IP: %s)", self.lan_client.ip)
+        _LOGGER.info("DiyHome: modalità LAN attiva (%s)", self.lan_client.mdns_hostname)
         self.lan_mode = True
         self.update_interval = timedelta(seconds=LAN_SCAN_INTERVAL)
 
@@ -273,7 +273,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             )
 
         # Retry LAN periodico
-        if self.lan_client.ip and (not self._lan_retry_task or self._lan_retry_task.done()):
+        if self.lan_client.is_available() and (not self._lan_retry_task or self._lan_retry_task.done()):
             self._lan_retry_task = self.hass.async_create_task(
                 self._lan_retry_loop(),
                 name=f"diyhome_lan_retry_{self._entry.entry_id}",
@@ -283,7 +283,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     async def _listen_lan_sse(self) -> None:
         """Long-running task: ascolta /api/v1/ha/events SSE dal device LAN."""
-        url = f"http://{self.lan_client.ip}/api/v1/ha/events"
+        url = f"http://{self.lan_client.mdns_hostname}/api/v1/ha/events"
         _LOGGER.debug("DiyHome LAN SSE: connessione a %s", url)
 
         while not self._stopping:
@@ -369,7 +369,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             await asyncio.sleep(LAN_RETRY_INTERVAL)
             if self._stopping or self.lan_mode:
                 return
-            _LOGGER.debug("DiyHome: retry probe LAN (%s)", self.lan_client.ip)
+            _LOGGER.debug("DiyHome: retry probe LAN (%s)", self.lan_client.mdns_hostname)
             if await self._probe_lan():
                 _LOGGER.info("DiyHome: LAN tornata disponibile, switch a LAN mode")
                 await self._activate_lan_mode()
@@ -509,7 +509,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         self, uid: str, action: str, payload: dict | None = None
     ) -> bool:
         """Invia comando: LAN diretta se disponibile, cloud altrimenti."""
-        if self.lan_mode and self.lan_client.ip:
+        if self.lan_mode and self.lan_client.is_available():
             try:
                 ok = await self.lan_client.send_command(action, payload or {})
                 if ok:
@@ -545,16 +545,22 @@ class DiyHomeRuntimeData:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up DiyHome from a config entry — LAN-first."""
+    """Set up DiyHome from a config entry — LAN-first via mDNS hostname."""
     client = DiyHomeApiClient(hass, entry)
-    lan_ip = entry.options.get(CONF_DEVICE_IP, "").strip()
-    lan_client = DiyHomeLanClient(ip=lan_ip)
+
+    # Hostname mDNS — presente se device scoperto via zeroconf o config manuale
+    # Es: "DIYHome_WT1_AABBCC.local" — stabile anche dopo riavvio router
+    mdns_hostname = (
+        entry.data.get(CONF_MDNS_HOSTNAME, "")
+        or entry.options.get(CONF_MDNS_HOSTNAME, "")
+    ).strip()
+
+    lan_client = DiyHomeLanClient(mdns_hostname=mdns_hostname)
 
     coordinator = DiyHomeCoordinator(hass, client, lan_client, entry)
 
-    # First refresh: prova LAN prima, poi cloud
-    # Non blocca se internet è down ma LAN risponde
-    if lan_ip:
+    # First refresh: prova LAN via mDNS hostname prima, poi cloud
+    if mdns_hostname:
         try:
             states = await asyncio.wait_for(
                 lan_client.get_all_states(), timeout=LAN_CONNECT_TIMEOUT
@@ -562,7 +568,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if states:
                 coordinator.async_set_updated_data(states)
                 coordinator.lan_mode = True
-                _LOGGER.info("DiyHome: first refresh da LAN (%s)", lan_ip)
+                _LOGGER.info("DiyHome: first refresh da LAN (%s)", mdns_hostname)
         except Exception:
             pass
 

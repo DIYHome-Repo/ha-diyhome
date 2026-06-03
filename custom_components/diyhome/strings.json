@@ -9,21 +9,24 @@
           "password": "Password"
         }
       },
-      "lan": {
-        "title": "Local Device IP (optional)",
-        "description": "Enter the local IP address of your DiyHome device (e.g. 192.168.1.50) to enable direct LAN control: real-time state updates, offline operation, and zero-cloud commands. Leave empty to use cloud-only mode.",
+      "zeroconf_confirm": {
+        "title": "DiyHome device found",
+        "description": "A DiyHome device was found on your network ({hostname}). Enter your account credentials to connect it.",
         "data": {
-          "device_ip": "Device IP address"
+          "email": "Email",
+          "password": "Password"
         }
       }
     },
     "error": {
       "invalid_auth": "Incorrect email or password.",
       "cannot_connect": "Unable to connect to DiyHome. Check your internet connection.",
-      "unknown": "Unexpected error. Check Home Assistant logs."
+      "unknown": "Unexpected error. Check Home Assistant logs.",
+      "no_uid": "Device found but UID missing. Try updating the firmware."
     },
     "abort": {
-      "already_configured": "DiyHome is already configured."
+      "already_configured": "DiyHome is already configured.",
+      "no_uid": "Device found but UID missing. Update the firmware and try again."
     },
     "create_entry": {
       "default": "DiyHome connected successfully. Your devices are now available in Home Assistant."
@@ -31,12 +34,9 @@
   },
   "options": {
     "step": {
-      "lan": {
-        "title": "Local Device IP",
-        "description": "Update the local IP address of your DiyHome device. Leave empty to use cloud-only mode.",
-        "data": {
-          "device_ip": "Device IP address"
-        }
+      "init": {
+        "title": "DiyHome options",
+        "description": "No options to configure. The device is discovered automatically via mDNS."
       }
     },
     "error": {}
