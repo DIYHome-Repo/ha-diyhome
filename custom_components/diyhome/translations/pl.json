@@ -3,7 +3,16 @@
     "step": {
       "user": {
         "title": "Połącz DiyHome",
-        "description": "Wprowadź dane logowania do konta DiyHome.",
+        "description": "Wprowadź dane logowania do konta DiyHome. Jeśli urządzenie jest w sieci lokalnej, możesz opcjonalnie podać jego nazwę hosta mDNS (np. DIYHome_WT1_AABBCC.local), aby włączyć bezpośrednie sterowanie LAN.",
+        "data": {
+          "email": "E-mail",
+          "password": "Hasło",
+          "mdns_hostname": "Nazwa hosta mDNS / lokalny IP (opcjonalnie)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Znaleziono urządzenie DiyHome",
+        "description": "W Twojej sieci znaleziono urządzenie DiyHome ({hostname}). Wprowadź dane logowania, aby je podłączyć.",
         "data": {
           "email": "E-mail",
           "password": "Hasło"
@@ -13,14 +22,25 @@
     "error": {
       "invalid_auth": "Nieprawidłowy adres e-mail lub hasło.",
       "cannot_connect": "Nie można połączyć się z DiyHome. Sprawdź połączenie internetowe.",
-      "unknown": "Nieoczekiwany błąd. Sprawdź dzienniki Home Assistant."
+      "unknown": "Nieoczekiwany błąd. Sprawdź dzienniki Home Assistant.",
+      "no_uid": "Urządzenie znalezione, ale brak UID. Spróbuj zaktualizować firmware."
     },
     "abort": {
-      "already_configured": "DiyHome jest już skonfigurowany."
+      "already_configured": "DiyHome jest już skonfigurowany.",
+      "no_uid": "Urządzenie znalezione, ale brak UID. Zaktualizuj firmware i spróbuj ponownie."
     },
     "create_entry": {
       "default": "DiyHome połączony pomyślnie. Twoje urządzenia są teraz dostępne w Home Assistant."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcje DiyHome",
+        "description": "Brak opcji do ręcznej konfiguracji. Urządzenie jest automatycznie wykrywane przez mDNS."
+      }
+    },
+    "error": {}
   },
   "entity": {
     "binary_sensor": {
