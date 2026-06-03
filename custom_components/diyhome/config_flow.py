@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import aiohttp
 import voluptuous as vol
@@ -18,8 +19,9 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# FIX P1/P2: form manuale ora include hostname mDNS opzionale.
-# Utenti senza zeroconf possono inserirlo manualmente per abilitare LAN mode.
+# Regex per rilevare un IP puro (es. "192.168.1.248")
+_IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_EMAIL): str,
@@ -27,6 +29,46 @@ STEP_USER_SCHEMA = vol.Schema(
         vol.Optional(CONF_MDNS_HOSTNAME, default=""): str,
     }
 )
+
+
+async def _resolve_ip_to_local_hostname(
+    session: aiohttp.ClientSession, host: str
+) -> str:
+    """Se host è un IP puro, interroga /mdns-state sul device per ottenere
+    il nome .local stabile che non cambia dopo reset router.
+
+    Ritorna l'hostname .local se trovato, altrimenti ritorna host invariato.
+    Il device espone /mdns-state senza autenticazione (endpoint pubblico).
+    """
+    if not host or not _IP_RE.match(host):
+        return host  # già hostname .local o vuoto — non modificare
+
+    try:
+        async with session.get(
+            f"http://{host}/mdns-state",
+            timeout=aiohttp.ClientTimeout(total=3),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json(content_type=None)
+                hostname = data.get("hostname", "").strip()
+                if hostname:
+                    resolved = (
+                        hostname
+                        if hostname.endswith(".local")
+                        else f"{hostname}.local"
+                    )
+                    _LOGGER.debug(
+                        "DiyHome: IP %s → hostname mDNS stabile %s", host, resolved
+                    )
+                    return resolved
+    except Exception as err:
+        _LOGGER.debug(
+            "DiyHome: /mdns-state su %s non raggiungibile (%s) — uso IP come fallback",
+            host,
+            err,
+        )
+
+    return host  # fallback: usa IP
 
 
 class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -51,8 +93,8 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_uid")
 
         # Previeni duplicati: usa l'UID come unique_id.
-        # Se l'utente aveva già una installazione manuale, _abort_if_unique_id_configured
-        # aggiorna il CONF_MDNS_HOSTNAME su quella voce esistente invece di duplicare.
+        # Se l'utente aveva già una installazione manuale con IP, _abort_if_unique_id_configured
+        # aggiorna il CONF_MDNS_HOSTNAME su quella voce esistente con l'hostname .local corretto.
         await self.async_set_unique_id(uid)
         self._abort_if_unique_id_configured(
             updates={CONF_MDNS_HOSTNAME: hostname}
@@ -118,7 +160,12 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Setup manuale: form email + password + hostname mDNS opzionale."""
+        """Setup manuale: form email + password + hostname mDNS opzionale.
+
+        Se l'utente inserisce un IP (es. 192.168.1.248), il sistema interroga
+        automaticamente il device per ottenere il nome .local stabile e salva
+        quello — così l'integrazione non si rompe dopo un reset del router.
+        """
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
 
@@ -127,7 +174,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email: str = user_input[CONF_EMAIL].strip().lower()
             password: str = user_input[CONF_PASSWORD]
-            mdns_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
+            raw_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
 
             try:
                 async with aiohttp.ClientSession() as session:
@@ -138,9 +185,24 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
+
+                            # ── Auto-risoluzione IP → hostname .local ────────
+                            # Se l'utente ha inserito un IP, chiediamo al device
+                            # il suo hostname mDNS stabile prima di salvarlo.
+                            # Questo garantisce che dopo un reset router l'hostname
+                            # .local si risolva sempre al nuovo IP automaticamente.
+                            mdns_hostname = await _resolve_ip_to_local_hostname(
+                                session, raw_hostname
+                            )
+                            if mdns_hostname != raw_hostname:
+                                _LOGGER.info(
+                                    "DiyHome: IP %s convertito automaticamente in hostname "
+                                    "mDNS stabile %s",
+                                    raw_hostname,
+                                    mdns_hostname,
+                                )
+
                             # FIX P2: recupera UID dal cloud per impostare unique_id.
-                            # Collega questa voce manuale al device — se in futuro lo
-                            # stesso device viene scoperto via zeroconf, HA non duplica.
                             uid = await self._fetch_first_uid(
                                 session, data["access_token"]
                             )
@@ -180,11 +242,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _fetch_first_uid(
         self, session: aiohttp.ClientSession, token: str
     ) -> str:
-        """Recupera l'UID del primo device dal cloud per impostare unique_id.
-
-        Se l'utente ha più device, prende solo il primo — la voce manuale copre
-        tutti i device dell'account come nel flow precedente.
-        """
+        """Recupera l'UID del primo device dal cloud per impostare unique_id."""
         try:
             async with session.get(
                 f"{CLOUD_URL}/api/ha/devices",
@@ -207,7 +265,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow — nessuna opzione da configurare manualmente."""
+    """Options flow — aggiorna hostname mDNS con auto-risoluzione IP→.local."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -215,6 +273,39 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
+        """Mostra il campo hostname mDNS e auto-risolve l'IP se necessario."""
+        current_hostname: str = (
+            self._config_entry.options.get(CONF_MDNS_HOSTNAME)
+            or self._config_entry.data.get(CONF_MDNS_HOSTNAME, "")
+        )
+
         if user_input is not None:
-            return self.async_create_entry(data={})
-        return self.async_show_form(step_id="init", data_schema=vol.Schema({}))
+            new_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
+
+            # Auto-risoluzione: se l'utente ha incollato un IP, convertilo subito
+            if new_hostname:
+                async with aiohttp.ClientSession() as session:
+                    resolved = await _resolve_ip_to_local_hostname(session, new_hostname)
+                    if resolved != new_hostname:
+                        _LOGGER.info(
+                            "DiyHome options: IP %s convertito automaticamente in %s",
+                            new_hostname,
+                            resolved,
+                        )
+                    new_hostname = resolved
+
+            return self.async_create_entry(
+                title="",
+                data={CONF_MDNS_HOSTNAME: new_hostname},
+            )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_MDNS_HOSTNAME, default=current_hostname
+                    ): str,
+                }
+            ),
+        )
