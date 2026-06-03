@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.0.4 con MQTT locale + fallback REST/SSE."""
+"""DiyHome integration for Home Assistant — v2.0.5 con MQTT locale + fallback REST/SSE."""
 from __future__ import annotations
 
 import asyncio

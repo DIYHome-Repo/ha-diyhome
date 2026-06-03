@@ -1,6 +1,7 @@
 """Switch platform — valvola principale, valvola 2, zone irrigazione, pompa."""
 from __future__ import annotations
 
+import json
 import logging
 
 from homeassistant.components.switch import SwitchEntity
@@ -45,11 +46,12 @@ async def async_setup_entry(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _mqtt_or_http(coordinator: DualModeCoordinator, topic: str, payload: str) -> bool:
-    """Pubblica su MQTT locale se disponibile. payload deve essere stringa (ON/OFF).
+    """Pubblica su MQTT locale se disponibile, con payload già pronto per il firmware.
 
-    I topic valve/set, valve2/set, pump/set e irrigation/{n}/set si aspettano
-    payload stringa "ON" | "OFF" — NON JSON — coerentemente con il backend cloud
-    (mqtt-client.ts righe 1849-1870).
+    Contratti firmware (topic → payload):
+    - valve/set, valve2/set, irrigation/z{n}/set → stringa "ON" | "OFF"
+    - pump/set → JSON {"mode": "AUTO_ENABLE"} | {"mode": "FORCED_DISABLED"}
+    Vedere mqtt_module.cpp e irrigation_module.cpp del firmware WT-1.
     """
     if coordinator.mqtt_mode:
         return coordinator.mqtt_publish(topic, payload)
@@ -190,7 +192,9 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._optimistic_is_on = True
         self.async_write_ha_state()
 
-        topic = f"diyhome/{self._uid}/irrigation/{self._zone_index}/set"
+        # Firmware: topic deve includere prefisso 'z' prima dell'indice zona
+        # (irrigation_module.cpp: topic.charAt(prevSlash + 1) == 'z')
+        topic = f"diyhome/{self._uid}/irrigation/z{self._zone_index}/set"
 
         if not _mqtt_or_http(self._coordinator, topic, "ON"):
             await self._client.send_zone_command(self._uid, self._zone_index, True)
@@ -199,7 +203,7 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._optimistic_is_on = False
         self.async_write_ha_state()
 
-        topic = f"diyhome/{self._uid}/irrigation/{self._zone_index}/set"
+        topic = f"diyhome/{self._uid}/irrigation/z{self._zone_index}/set"
 
         if not _mqtt_or_http(self._coordinator, topic, "OFF"):
             await self._client.send_zone_command(self._uid, self._zone_index, False)
@@ -261,8 +265,11 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
         self.async_write_ha_state()
 
         topic = f"diyhome/{self._uid}/pump/set"
+        # Firmware: pump/set si aspetta JSON {"mode": "..."} (mqtt_module.cpp riga 897)
+        # "ON" → AUTO_ENABLE, "OFF" → FORCED_DISABLED
+        payload = json.dumps({"mode": "AUTO_ENABLE"})
 
-        if not _mqtt_or_http(self._coordinator, topic, "ON"):
+        if not _mqtt_or_http(self._coordinator, topic, payload):
             await self._client.send_command(self._uid, "pump_enable")
 
     async def async_turn_off(self, **kwargs) -> None:
@@ -270,6 +277,7 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
         self.async_write_ha_state()
 
         topic = f"diyhome/{self._uid}/pump/set"
+        payload = json.dumps({"mode": "FORCED_DISABLED"})
 
-        if not _mqtt_or_http(self._coordinator, topic, "OFF"):
+        if not _mqtt_or_http(self._coordinator, topic, payload):
             await self._client.send_command(self._uid, "pump_disable")
