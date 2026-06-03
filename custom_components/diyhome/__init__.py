@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.2.6 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.2.7 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
@@ -326,7 +326,15 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     # ── LAN SSE listener ──────────────────────────────────────────────────────
 
     async def _listen_lan_sse(self) -> None:
-        """Long-running task: ascolta /api/v1/ha/events SSE dal device LAN."""
+        """Long-running task: ascolta /api/v1/ha/events SSE dal device LAN.
+
+        FIX P9 (dead TCP): aggiunto sock_read=25s. Se non arrivano dati in 25s
+        (evento o keepalive firmware), aiohttp solleva TimeoutError → reconnect.
+        Il firmware invia un keepalive "ping" ogni 15s per mantenere la TCP viva
+        attraverso i NAT router (che chiudono silenziosamente connessioni idle).
+        Senza keepalive, il router chiude la TCP, firmware crede il client ancora
+        connesso, haPushState() scrive su socket morto → HACS non riceve nulla.
+        """
         url = f"http://{self.lan_client.mdns_hostname}/api/v1/ha/events"
         _LOGGER.debug("DiyHome LAN SSE: connessione a %s", url)
 
@@ -334,7 +342,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             try:
                 async with self._session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=None, connect=LAN_CONNECT_TIMEOUT),
+                    # sock_read=25: timeout se nessun dato (evento o keepalive) arriva
+                    # in 25s. Il firmware invia keepalive ogni 15s → in condizioni normali
+                    # il timeout non scatta mai. Se la TCP è morta (router NAT timeout),
+                    # scatta entro 25s e force-reconnect.
+                    timeout=aiohttp.ClientTimeout(total=None, connect=LAN_CONNECT_TIMEOUT, sock_read=25),
                     headers={"Accept": "text/event-stream"},
                 ) as resp:
                     if resp.status != 200:
@@ -342,7 +354,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                         await asyncio.sleep(5)
                         continue
 
-                    _LOGGER.debug("DiyHome LAN SSE: connesso")
+                    _LOGGER.debug("DiyHome LAN SSE: connesso a %s", self.lan_client.mdns_hostname)
                     current_event: str | None = None
                     # FIX P6: line buffer — aiohttp restituisce chunk HTTP, non righe.
                     # Se il server invia "event: ha_state\ndata: {...}\n\n" in un unico
@@ -382,8 +394,15 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                             new_data = dict(self.data)
                                             new_data[uid] = _norm_lan_state(payload)
                                             self._update_from_lan(new_data)
+                                            _LOGGER.debug(
+                                                "DiyHome LAN SSE: evento '%s' uid=%s → HA aggiornato",
+                                                current_event, uid,
+                                            )
                                         else:
                                             # Payload parziale: ricarica stato completo dal firmware
+                                            _LOGGER.debug(
+                                                "DiyHome LAN SSE: payload parziale uid=%s, ricarico stato", uid
+                                            )
                                             try:
                                                 full = await self.lan_client.get_ha_state()
                                                 if full:
@@ -392,6 +411,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                                     self._update_from_lan(new_data)
                                             except Exception:
                                                 pass
+                                    else:
+                                        _LOGGER.debug(
+                                            "DiyHome LAN SSE: uid=%s non in self.data (keys=%s)",
+                                            uid, list(self.data.keys()) if self.data else "None",
+                                        )
                                 except Exception as parse_err:
                                     _LOGGER.debug("DiyHome LAN SSE parse: %s", parse_err)
                                 current_event = None
@@ -401,8 +425,13 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 if self._stopping:
                     return
-                _LOGGER.debug("DiyHome LAN SSE: errore (%s), retry in 1s", err)
-                await asyncio.sleep(1)
+                # TimeoutError = nessun dato in 25s (TCP morta o firmware non invia keepalive)
+                # Reconnect immediato: il firmware invia lo stato corrente via onConnect()
+                if isinstance(err, asyncio.TimeoutError):
+                    _LOGGER.debug("DiyHome LAN SSE: timeout 25s (TCP inattiva) — reconnect")
+                else:
+                    _LOGGER.debug("DiyHome LAN SSE: errore (%s) — retry in 1s", err)
+                    await asyncio.sleep(1)
                 # Se LAN non risponde dopo disconnessione → torna cloud mode
                 if not await self._probe_lan():
                     _LOGGER.info("DiyHome: LAN irraggiungibile, passaggio a cloud mode")
@@ -517,7 +546,10 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                         await asyncio.sleep(5)
                         continue
 
-                    _LOGGER.debug("DiyHome cloud SSE: connesso (lan_mode=%s)", self.lan_mode)
+                    _LOGGER.debug(
+                        "DiyHome cloud SSE: connesso (lan_mode=%s, url=%s)",
+                        self.lan_mode, stream_url,
+                    )
                     current_event: str | None = None
                     # FIX P6: stessa correzione del LAN SSE — line buffer per gestire
                     # chunk HTTP multi-riga inviati in un unico res.write() dal backend.
@@ -545,7 +577,12 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                     # FIX P5 anti-stale: se un update LAN è avvenuto < 2s fa,
                                     # l'evento cloud potrebbe portare stato precedente al comando
                                     # (race: HA→LAN cmd → cloud SSE ritardato con stato vecchio).
-                                    if self.lan_mode and (time.monotonic() - self._lan_last_update) < 2.0:
+                                    age = time.monotonic() - self._lan_last_update
+                                    if self.lan_mode and age < 2.0:
+                                        _LOGGER.debug(
+                                            "DiyHome cloud SSE: evento '%s' scartato anti-stale (LAN update %0.1fs fa)",
+                                            current_event, age,
+                                        )
                                         current_event = None
                                         continue
                                     payload = json.loads(line[5:].strip())
@@ -556,7 +593,15 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                             new_data = dict(self.data)
                                             new_data[uid] = _norm_cloud_state(embedded)
                                             self.async_set_updated_data(new_data)
+                                            _LOGGER.debug(
+                                                "DiyHome cloud SSE: evento '%s' uid=%s → HA aggiornato",
+                                                current_event, uid,
+                                            )
                                         else:
+                                            _LOGGER.debug(
+                                                "DiyHome cloud SSE: evento '%s' uid=%s senza stato embedded → GET",
+                                                current_event, uid,
+                                            )
                                             try:
                                                 state = await self.client.get_device_state(uid)
                                                 new_data = dict(self.data)
@@ -566,6 +611,10 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                                 return
                                             except Exception:
                                                 await self.async_request_refresh()
+                                    else:
+                                        _LOGGER.debug(
+                                            "DiyHome cloud SSE: uid=%s non in self.data", uid
+                                        )
                                 except Exception:
                                     pass
                                 current_event = None
