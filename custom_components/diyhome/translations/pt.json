@@ -3,7 +3,16 @@
     "step": {
       "user": {
         "title": "Conectar DiyHome",
-        "description": "Insira as suas credenciais da conta DiyHome.",
+        "description": "Insira as suas credenciais da conta DiyHome. Se o dispositivo estiver na rede local, pode inserir opcionalmente o seu nome de anfitrião mDNS (ex. DIYHome_WT1_AABBCC.local) para ativar o controlo LAN direto.",
+        "data": {
+          "email": "E-mail",
+          "password": "Palavra-passe",
+          "mdns_hostname": "Nome de anfitrião mDNS / IP local (opcional)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Dispositivo DiyHome encontrado",
+        "description": "Foi encontrado um dispositivo DiyHome na sua rede ({hostname}). Insira as suas credenciais para o ligar.",
         "data": {
           "email": "E-mail",
           "password": "Palavra-passe"
@@ -13,14 +22,25 @@
     "error": {
       "invalid_auth": "E-mail ou palavra-passe incorretos.",
       "cannot_connect": "Não é possível ligar ao DiyHome. Verifique a sua ligação à internet.",
-      "unknown": "Erro inesperado. Verifique os registos do Home Assistant."
+      "unknown": "Erro inesperado. Verifique os registos do Home Assistant.",
+      "no_uid": "Dispositivo encontrado mas UID em falta. Tente atualizar o firmware."
     },
     "abort": {
-      "already_configured": "DiyHome já está configurado."
+      "already_configured": "DiyHome já está configurado.",
+      "no_uid": "Dispositivo encontrado mas UID em falta. Atualize o firmware e tente novamente."
     },
     "create_entry": {
       "default": "DiyHome ligado com sucesso. Os seus dispositivos estão agora disponíveis no Home Assistant."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções DiyHome",
+        "description": "Sem opções para configurar manualmente. O dispositivo é descoberto automaticamente via mDNS."
+      }
+    },
+    "error": {}
   },
   "entity": {
     "binary_sensor": {
