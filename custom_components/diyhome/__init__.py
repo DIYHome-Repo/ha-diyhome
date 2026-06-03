@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.2.1 LAN-first (HTTP SSE + REST) + Cloud fallback."""
+"""DiyHome integration for Home Assistant — v2.2.2 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
@@ -226,16 +226,20 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     # ── Attivazione modalità ──────────────────────────────────────────────────
 
     async def _activate_lan_mode(self) -> None:
-        """Avvia LAN SSE push + HTTP watchdog. Cancella cloud tasks."""
+        """Avvia LAN SSE push + HTTP watchdog.
+
+        La cloud SSE rimane SEMPRE attiva in parallelo — i comandi dall'app
+        DiyHome o dal cloud arrivano via cloud SSE, non via LAN SSE firmware.
+        Cancellare la cloud SSE causava aggiornamenti ritardati (solo watchdog 10s)
+        quando il comando partiva dall'app invece che da HA stesso.
+        """
         _LOGGER.info("DiyHome: modalità LAN attiva (%s)", self.lan_client.mdns_hostname)
         self.lan_mode = True
         self.update_interval = timedelta(seconds=LAN_SCAN_INTERVAL)
 
-        # Cancella cloud
-        for t in (self._cloud_sse_task, self._lan_retry_task):
-            if t and not t.done():
-                t.cancel()
-        self._cloud_sse_task = None
+        # Cancella solo il retry LAN (non serve più: siamo già in LAN mode)
+        if self._lan_retry_task and not self._lan_retry_task.done():
+            self._lan_retry_task.cancel()
         self._lan_retry_task = None
 
         # Avvia LAN SSE
@@ -250,6 +254,13 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             self._lan_watchdog_task = self.hass.async_create_task(
                 self._lan_watchdog(),
                 name=f"diyhome_lan_watchdog_{self._entry.entry_id}",
+            )
+
+        # Cloud SSE: avvia/mantieni attiva — riceve aggiornamenti da comandi app/cloud
+        if not self._cloud_sse_task or self._cloud_sse_task.done():
+            self._cloud_sse_task = self.hass.async_create_task(
+                self._listen_cloud_sse(),
+                name=f"diyhome_cloud_sse_{self._entry.entry_id}",
             )
 
     async def _activate_cloud_mode(self) -> None:
@@ -415,12 +426,18 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     # ── Cloud SSE listener ────────────────────────────────────────────────────
 
     async def _listen_cloud_sse(self) -> None:
-        """Long-running task: ascolta /api/ha/stream SSE dal cloud DiyHome."""
+        """Long-running task: ascolta /api/ha/stream SSE dal cloud DiyHome.
+
+        Attiva SEMPRE — sia in modalità LAN che in modalità cloud.
+        In LAN mode riceve aggiornamenti da comandi app/cloud DiyHome
+        (il firmware non emette LAN SSE per comandi MQTT ricevuti).
+        In cloud mode è la sorgente primaria di aggiornamenti real-time.
+        """
         stream_url = f"{CLOUD_URL}/api/ha/stream"
         token = self._entry.data.get("access_token", "")
         headers = {"Authorization": f"Bearer {token}"}
 
-        while not self._stopping and not self.lan_mode:
+        while not self._stopping:
             try:
                 async with self._session.get(
                     stream_url,
@@ -442,11 +459,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                         await asyncio.sleep(5)
                         continue
 
-                    _LOGGER.debug("DiyHome cloud SSE: connesso")
+                    _LOGGER.debug("DiyHome cloud SSE: connesso (lan_mode=%s)", self.lan_mode)
                     current_event: str | None = None
 
                     async for raw_line in resp.content:
-                        if self._stopping or self.lan_mode:
+                        if self._stopping:
                             return
 
                         line = raw_line.decode("utf-8").strip()
@@ -486,7 +503,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except asyncio.CancelledError:
                 return
             except Exception as err:
-                if self._stopping or self.lan_mode:
+                if self._stopping:
                     return
                 _LOGGER.debug("DiyHome cloud SSE: errore (%s), retry 5s", err)
                 await asyncio.sleep(5)
