@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.1.0 LAN-first (HTTP SSE + REST) + Cloud fallback."""
+"""DiyHome integration for Home Assistant — v2.2.1 LAN-first (HTTP SSE + REST) + Cloud fallback."""
 from __future__ import annotations
 
 import asyncio
@@ -332,8 +332,8 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 if self._stopping:
                     return
-                _LOGGER.debug("DiyHome LAN SSE: errore (%s), retry in 5s", err)
-                await asyncio.sleep(5)
+                _LOGGER.debug("DiyHome LAN SSE: errore (%s), retry in 1s", err)
+                await asyncio.sleep(1)
                 # Se LAN non risponde dopo disconnessione → torna cloud mode
                 if not await self._probe_lan():
                     _LOGGER.info("DiyHome: LAN irraggiungibile, passaggio a cloud mode")
@@ -375,6 +375,43 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 await self._activate_lan_mode()
                 return
 
+    # ── Token refresh ─────────────────────────────────────────────────────────
+
+    async def _refresh_access_token(self) -> bool:
+        """Rinnova access_token usando il refresh_token salvato in entry.data.
+
+        Chiama POST /api/ha/oauth/token con grant_type=refresh_token.
+        Aggiorna entry.data con il nuovo access_token e refresh_token.
+        Ritorna True se il refresh è andato a buon fine.
+        """
+        refresh_token = self._entry.data.get("refresh_token")
+        if not refresh_token or not self._session:
+            return False
+        try:
+            async with self._session.post(
+                f"{CLOUD_URL}/api/ha/oauth/token",
+                json={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning("DiyHome token refresh: HTTP %s", resp.status)
+                    return False
+                data = await resp.json()
+                new_access = data.get("access_token")
+                new_refresh = data.get("refresh_token", refresh_token)
+                if not new_access:
+                    return False
+                # Aggiorna entry.data (api.py legge access_token da entry.data ad ogni chiamata)
+                new_data = {**self._entry.data, "access_token": new_access, "refresh_token": new_refresh}
+                self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+                return True
+        except Exception as err:
+            _LOGGER.debug("DiyHome token refresh errore: %s", err)
+            return False
+
     # ── Cloud SSE listener ────────────────────────────────────────────────────
 
     async def _listen_cloud_sse(self) -> None:
@@ -391,8 +428,15 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                     timeout=aiohttp.ClientTimeout(total=None, connect=15),
                 ) as resp:
                     if resp.status in (401, 403):
-                        _LOGGER.warning("DiyHome cloud SSE: token non valido")
-                        return
+                        _LOGGER.debug("DiyHome cloud SSE: token scaduto (HTTP %s), tentativo refresh", resp.status)
+                        refreshed = await self._refresh_access_token()
+                        if refreshed:
+                            headers = {"Authorization": f"Bearer {self._entry.data.get('access_token', '')}"}
+                            _LOGGER.debug("DiyHome cloud SSE: token rinnovato, riconnessione")
+                        else:
+                            _LOGGER.warning("DiyHome cloud SSE: refresh token fallito, retry tra 60s")
+                            await asyncio.sleep(60)
+                        continue
                     if resp.status != 200:
                         _LOGGER.debug("DiyHome cloud SSE: HTTP %s, retry 5s", resp.status)
                         await asyncio.sleep(5)

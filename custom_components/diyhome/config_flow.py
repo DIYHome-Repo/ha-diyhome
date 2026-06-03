@@ -81,6 +81,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 title=f"DIYHome ({self._discovered_hostname})",
                                 data={
                                     "access_token": data["access_token"],
+                                    "refresh_token": data.get("refresh_token", ""),
                                     "email": email,
                                     CONF_MDNS_HOSTNAME: self._discovered_hostname,
                                 },
@@ -130,6 +131,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             data = await resp.json()
                             self._entry_data = {
                                 "access_token": data["access_token"],
+                                "refresh_token": data.get("refresh_token", ""),
                                 "email": email,
                             }
                             return self.async_create_entry(
