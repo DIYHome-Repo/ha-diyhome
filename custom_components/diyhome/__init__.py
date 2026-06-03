@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.0.0 con MQTT locale + fallback REST/SSE."""
+"""DiyHome integration for Home Assistant — v2.0.2 con MQTT locale + fallback REST/SSE."""
 from __future__ import annotations
 
 import asyncio
@@ -335,9 +335,16 @@ class DualModeCoordinator(DataUpdateCoordinator):
     # ── Gestione runtime fallback SSE ─────────────────────────────────────────
 
     def _on_mqtt_connect(self) -> None:
-        """Chiamato dal thread MQTT quando (ri)connesso — ferma SSE se attivo."""
+        """Chiamato dal thread MQTT quando (ri)connesso — marshala stop SSE nel loop HA."""
         self.mqtt_mode = True
         self._mqtt_disconnect_at = None
+        try:
+            self.hass.loop.call_soon_threadsafe(self._cancel_sse_on_connect)
+        except Exception:
+            pass
+
+    def _cancel_sse_on_connect(self) -> None:
+        """Cancella il task SSE fallback — eseguito nel loop HA (thread-safe)."""
         if self._sse_task and not self._sse_task.done():
             _LOGGER.info("DiyHome: MQTT locale riconnesso — fermo SSE fallback")
             self._sse_task.cancel()
