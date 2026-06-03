@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.0.3 con MQTT locale + fallback REST/SSE."""
+"""DiyHome integration for Home Assistant — v2.0.4 con MQTT locale + fallback REST/SSE."""
 from __future__ import annotations
 
 import asyncio
@@ -39,38 +39,32 @@ MQTT_OFFLINE_THRESHOLD = 45     # secondi di disconnessione prima di avviare SSE
 # Normalizzatori payload MQTT → struttura dati attesa da sensor.py / switch.py
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _first_not_none(src: dict, *keys):
+    """Ritorna il valore del primo tasto presente nel dict (incluso 0 e False).
+
+    Usa controllo esplicito `is not None` invece di `or` per preservare
+    valori numerici falsy come 0 (es. flow_in_rate=0 quando non c'è flusso).
+    """
+    for k in keys:
+        if k in src and src[k] is not None:
+            return src[k]
+    return None
+
+
 def _norm_tank(payload: dict) -> dict:
     """Normalizza payload tank MQTT → device['tank'] atteso da sensor.py."""
     return {
-        "level_pct": (
-            payload.get("level_pct")
-            or payload.get("percentage")
-            or payload.get("level")
-        ),
-        "liters": payload.get("liters") or payload.get("volume"),
-        "temperature": (
-            payload.get("temperature")
-            or payload.get("temp")
-            or payload.get("ambientTemp")
-        ),
+        "level_pct":   _first_not_none(payload, "level_pct", "percentage", "level"),
+        "liters":      _first_not_none(payload, "liters", "volume"),
+        "temperature": _first_not_none(payload, "temperature", "temp", "ambientTemp"),
     }
 
 
 def _norm_flow(payload: dict) -> dict:
     """Normalizza payload flow MQTT → device['flow'] atteso da sensor.py."""
     return {
-        "flow_in_rate": (
-            payload.get("flow_in_rate")
-            or payload.get("in")
-            or payload.get("flowIn")
-            or payload.get("flow_in")
-        ),
-        "flow_out_rate": (
-            payload.get("flow_out_rate")
-            or payload.get("out")
-            or payload.get("flowOut")
-            or payload.get("flow_out")
-        ),
+        "flow_in_rate":  _first_not_none(payload, "flow_in_rate", "in", "flowIn", "flow_in"),
+        "flow_out_rate": _first_not_none(payload, "flow_out_rate", "out", "flowOut", "flow_out"),
     }
 
 
@@ -78,14 +72,13 @@ def _norm_diagnostics(existing: dict, payload: dict) -> dict:
     """Fonde payload heartbeat nei diagnostics → device['diagnostics']."""
     diag = dict(existing or {})
     wifi = payload.get("wifi", {}) if isinstance(payload.get("wifi"), dict) else {}
-    diag.update({
-        k: v for k, v in {
-            "rssi": payload.get("rssi") or wifi.get("rssi"),
-            "uptime": payload.get("uptime"),
-            "ssid": payload.get("ssid") or wifi.get("ssid"),
-            "ip_address": payload.get("ip") or payload.get("ip_address") or wifi.get("ip"),
-        }.items() if v is not None
-    })
+    updates = {
+        "rssi":       _first_not_none(payload, "rssi") if "rssi" in payload else _first_not_none(wifi, "rssi"),
+        "uptime":     _first_not_none(payload, "uptime"),
+        "ssid":       _first_not_none(payload, "ssid") if "ssid" in payload else _first_not_none(wifi, "ssid"),
+        "ip_address": _first_not_none(payload, "ip", "ip_address") if ("ip" in payload or "ip_address" in payload) else _first_not_none(wifi, "ip"),
+    }
+    diag.update({k: v for k, v in updates.items() if v is not None})
     return diag
 
 
