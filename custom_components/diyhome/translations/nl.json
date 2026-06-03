@@ -3,7 +3,16 @@
     "step": {
       "user": {
         "title": "DiyHome verbinden",
-        "description": "Voer je DiyHome-accountgegevens in.",
+        "description": "Voer je DiyHome-accountgegevens in. Als het apparaat op het lokale netwerk staat, kun je optioneel de mDNS-hostnaam invoeren (bijv. DIYHome_WT1_AABBCC.local) om directe LAN-bediening in te schakelen.",
+        "data": {
+          "email": "E-mail",
+          "password": "Wachtwoord",
+          "mdns_hostname": "mDNS-hostnaam / lokaal IP (optioneel)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "DiyHome-apparaat gevonden",
+        "description": "Er is een DiyHome-apparaat gevonden op je netwerk ({hostname}). Voer je accountgegevens in om het te verbinden.",
         "data": {
           "email": "E-mail",
           "password": "Wachtwoord"
@@ -13,14 +22,25 @@
     "error": {
       "invalid_auth": "Onjuist e-mailadres of wachtwoord.",
       "cannot_connect": "Kan geen verbinding maken met DiyHome. Controleer je internetverbinding.",
-      "unknown": "Onverwachte fout. Controleer de Home Assistant-logboeken."
+      "unknown": "Onverwachte fout. Controleer de Home Assistant-logboeken.",
+      "no_uid": "Apparaat gevonden maar UID ontbreekt. Probeer de firmware bij te werken."
     },
     "abort": {
-      "already_configured": "DiyHome is al geconfigureerd."
+      "already_configured": "DiyHome is al geconfigureerd.",
+      "no_uid": "Apparaat gevonden maar UID ontbreekt. Werk de firmware bij en probeer opnieuw."
     },
     "create_entry": {
       "default": "DiyHome succesvol verbonden. Je apparaten zijn nu beschikbaar in Home Assistant."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "DiyHome-opties",
+        "description": "Geen opties om handmatig te configureren. Het apparaat wordt automatisch ontdekt via mDNS."
+      }
+    },
+    "error": {}
   },
   "entity": {
     "binary_sensor": {
