@@ -1,9 +1,10 @@
-"""DiyHome integration for Home Assistant — v2.2.3 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.2.5 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -193,6 +194,10 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         self._cloud_sse_task: asyncio.Task | None = None
         self._lan_retry_task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
+        # FIX P5 anti-stale: timestamp dell'ultimo aggiornamento da sorgente LAN.
+        # La cloud SSE ignora eventi arrivati entro 2s da un aggiornamento LAN
+        # per evitare il race condition: cmd LAN → cloud SSE porta stato vecchio → rollback.
+        self._lan_last_update: float = 0.0
 
     # ── Ciclo di vita ─────────────────────────────────────────────────────────
 
@@ -217,6 +222,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+
+    def _update_from_lan(self, new_data: dict) -> None:
+        """Aggiorna stato da sorgente LAN registrando il timestamp anti-stale."""
+        self._lan_last_update = time.monotonic()
+        self.async_set_updated_data(new_data)
 
     def _cancel_all_tasks(self) -> None:
         for task in (
@@ -354,9 +364,25 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                 payload = json.loads(line[5:].strip())
                                 uid = payload.get("uid")
                                 if uid and self.data and uid in self.data:
-                                    new_data = dict(self.data)
-                                    new_data[uid] = _norm_lan_state(payload)
-                                    self.async_set_updated_data(new_data)
+                                    # FIX P4: verifica payload completo prima di aggiornare.
+                                    # Un payload parziale (es. solo valve1) sovrascriverebbe
+                                    # tank, zones, flow, diagnostics con dati mancanti.
+                                    _COMPLETE_KEYS = ("valve1", "tank", "zones", "pump", "flow")
+                                    is_complete = any(k in payload for k in _COMPLETE_KEYS)
+                                    if is_complete:
+                                        new_data = dict(self.data)
+                                        new_data[uid] = _norm_lan_state(payload)
+                                        self._update_from_lan(new_data)
+                                    else:
+                                        # Payload parziale: ricarica stato completo dal firmware
+                                        try:
+                                            full = await self.lan_client.get_ha_state()
+                                            if full:
+                                                new_data = dict(self.data)
+                                                new_data[uid] = _norm_lan_state({**full, "uid": uid})
+                                                self._update_from_lan(new_data)
+                                        except Exception:
+                                            pass
                             except Exception as parse_err:
                                 _LOGGER.debug("DiyHome LAN SSE parse: %s", parse_err)
                             current_event = None
@@ -389,7 +415,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             try:
                 states = await self.lan_client.get_all_states()
                 if states:
-                    self.async_set_updated_data(states)
+                    self._update_from_lan(states)
             except asyncio.CancelledError:
                 return
             except Exception as err:
@@ -501,6 +527,12 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
                         if line.startswith("data:") and current_event in _CLOUD_REALTIME_EVENTS:
                             try:
+                                # FIX P5 anti-stale: se un update LAN è avvenuto < 2s fa,
+                                # l'evento cloud potrebbe portare stato precedente al comando
+                                # (race: HA→LAN cmd → cloud SSE ritardato con stato vecchio).
+                                if self.lan_mode and (time.monotonic() - self._lan_last_update) < 2.0:
+                                    current_event = None
+                                    continue
                                 payload = json.loads(line[5:].strip())
                                 uid = payload.get("uid")
                                 if uid and self.data and uid in self.data:
@@ -615,13 +647,13 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             try:
                 ok = await self.lan_client.send_command(action, payload or {})
                 if ok:
-                    # FIX P8: dopo comando LAN riuscito, aggiorna subito stato HA
-                    # da LAN per confermare lo stato reale invece di aspettare il
-                    # watchdog (10s). Cloud/app sono aggiornati dal firmware via MQTT.
+                    # P8: dopo comando LAN riuscito, aggiorna subito stato HA da LAN.
+                    # _update_from_lan registra anche il timestamp anti-stale (FIX P5)
+                    # così la cloud SSE ignora l'eventuale echo ritardato con stato vecchio.
                     try:
                         states = await self.lan_client.get_all_states()
                         if states:
-                            self.async_set_updated_data(states)
+                            self._update_from_lan(states)
                     except Exception:
                         pass
                     return True
