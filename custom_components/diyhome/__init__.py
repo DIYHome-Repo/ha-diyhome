@@ -17,7 +17,7 @@ from .const import CLOUD_URL, DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = timedelta(seconds=120)  # fallback polling — real-time via SSE embedded state
+SCAN_INTERVAL = timedelta(seconds=30)
 
 
 @dataclass
