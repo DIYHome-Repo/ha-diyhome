@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import json
-import time
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -18,7 +17,7 @@ from .const import CLOUD_URL, DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = timedelta(seconds=30)
+SCAN_INTERVAL = timedelta(seconds=120)  # fallback polling — real-time via SSE embedded state
 
 
 @dataclass
@@ -84,10 +83,6 @@ async def _listen_sse(
     headers = {"Authorization": f"Bearer {token}"}
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
 
-    # Throttle: evita refresh multipli per lo stesso device in breve tempo
-    _last_refresh: dict[str, float] = {}
-    _MIN_INTERVAL = 0.2  # secondi tra due aggiornamenti dello stesso device
-
     while True:
         try:
             async with aiohttp.ClientSession() as http_session:
@@ -119,13 +114,18 @@ async def _listen_sse(
                             try:
                                 payload = json.loads(line[5:].strip())
                                 uid = payload.get("uid")
-                                if uid and uid in coordinator.data:
-                                    now = time.monotonic()
-                                    last = _last_refresh.get(uid, 0.0)
-                                    if now - last >= _MIN_INTERVAL:
-                                        _last_refresh[uid] = now
-                                        # Aggiornamento chirurgico: solo il device specifico
-                                        # via GET /state — molto più veloce del refresh globale
+                                if uid:
+                                    embedded_state = payload.get("state")
+                                    if embedded_state and uid in coordinator.data:
+                                        # v2 — stato completo embedded nel payload SSE:
+                                        # aggiornamento diretto senza HTTP call aggiuntiva.
+                                        # Elimina ~1 round-trip cloud + 7 DB query per evento.
+                                        new_data = dict(coordinator.data)
+                                        new_data[uid] = embedded_state
+                                        coordinator.async_set_updated_data(new_data)
+                                    elif uid in coordinator.data:
+                                        # Fallback v1: payload legacy (solo uid, senza state).
+                                        # Recupera lo stato via HTTP GET al cloud.
                                         try:
                                             state = await coordinator.client.get_device_state(uid)
                                             new_data = dict(coordinator.data)
@@ -135,10 +135,13 @@ async def _listen_sse(
                                             return
                                         except Exception as state_err:
                                             _LOGGER.debug(
-                                                "DiyHome SSE: get_device_state fallback refresh (%s)",
+                                                "DiyHome SSE: fallback refresh (%s)",
                                                 state_err,
                                             )
                                             await coordinator.async_request_refresh()
+                                    elif embedded_state:
+                                        # Device non ancora nel coordinator (aggiunto dopo avvio HA)
+                                        await coordinator.async_request_refresh()
                             except (json.JSONDecodeError, Exception):
                                 pass
                             current_event = None
