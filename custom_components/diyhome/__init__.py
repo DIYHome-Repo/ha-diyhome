@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.0.2 con MQTT locale + fallback REST/SSE."""
+"""DiyHome integration for Home Assistant — v2.0.3 con MQTT locale + fallback REST/SSE."""
 from __future__ import annotations
 
 import asyncio
@@ -265,6 +265,7 @@ class DualModeCoordinator(DataUpdateCoordinator):
         self._whoami_logged = False
         self._mqtt: DiyHomeMqttLocal | None = None
         self.mqtt_mode = False
+        self._stopping = False  # True durante shutdown intenzionale → sopprime SSE fallback
 
         # SSE runtime fallback
         self._sse_task: asyncio.Task | None = None
@@ -320,6 +321,7 @@ class DualModeCoordinator(DataUpdateCoordinator):
             return False
 
     def stop_mqtt(self) -> None:
+        self._stopping = True  # sopprime _on_mqtt_disconnect → nessun SSE spurio
         if self._mqtt:
             self._mqtt.stop()
             self._mqtt = None
@@ -351,21 +353,36 @@ class DualModeCoordinator(DataUpdateCoordinator):
             self._sse_task = None
 
     def _on_mqtt_disconnect(self) -> None:
-        """Chiamato dal thread MQTT quando disconnesso — schedula SSE fallback."""
+        """Chiamato dal thread MQTT quando disconnesso — schedula SSE fallback con grace period."""
         self.mqtt_mode = False
+        if self._stopping:
+            # Shutdown intenzionale: non creare SSE fallback
+            return
         self._mqtt_disconnect_at = time.monotonic()
-        # Schedula il check nel loop HA (thread-safe)
         try:
-            self.hass.loop.call_soon_threadsafe(self._schedule_sse_fallback)
+            # Schedula nel loop HA il delayed check (thread-safe)
+            self.hass.loop.call_soon_threadsafe(self._schedule_sse_delayed)
         except Exception:
             pass
 
-    def _schedule_sse_fallback(self) -> None:
-        """Avvia il task SSE fallback se non già attivo."""
+    def _schedule_sse_delayed(self) -> None:
+        """Schedula SSE fallback dopo il grace period MQTT_OFFLINE_THRESHOLD."""
+        self.hass.loop.call_later(
+            MQTT_OFFLINE_THRESHOLD, self._schedule_sse_fallback_guarded
+        )
+
+    def _schedule_sse_fallback_guarded(self) -> None:
+        """Avvia SSE solo se MQTT ancora offline dopo il grace period."""
+        if self._stopping or self.mqtt_mode:
+            return  # shutdown o MQTT riconnesso nel frattempo
         if self._sse_task and not self._sse_task.done():
             return  # SSE già attivo
+        if (self._mqtt_disconnect_at is None or
+                time.monotonic() - self._mqtt_disconnect_at < MQTT_OFFLINE_THRESHOLD):
+            return  # grace period non ancora scaduto
         _LOGGER.info(
-            "DiyHome: MQTT locale disconnesso — avvio SSE fallback"
+            "DiyHome: MQTT offline da %ss — avvio SSE fallback",
+            MQTT_OFFLINE_THRESHOLD,
         )
         self._sse_task = self.hass.async_create_task(
             _listen_sse(self.hass, self._entry, self),
@@ -611,7 +628,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     runtime_data: DiyHomeRuntimeData = entry.runtime_data
 
-    # Cancella SSE
+    # Ferma MQTT locale PRIMA — imposta _stopping=True → nessun SSE spurio su disconnect
+    runtime_data.coordinator.stop_mqtt()
+
+    # Cancella SSE come guard finale (include eventuali task creati da race condition)
     runtime_data.coordinator.cancel_sse_task()
     if runtime_data.sse_task and not runtime_data.sse_task.done():
         runtime_data.sse_task.cancel()
@@ -619,9 +639,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await runtime_data.sse_task
         except (asyncio.CancelledError, Exception):
             pass
-
-    # Ferma MQTT locale
-    runtime_data.coordinator.stop_mqtt()
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
