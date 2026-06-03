@@ -564,6 +564,24 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"DiyHome update error: {err}") from err
 
+    # ── Token LAN JWT ─────────────────────────────────────────────────────────
+
+    async def _fetch_lan_jwt(self, uid: str) -> None:
+        """Fetcha (o rinnova) il JWT LAN dal cloud e lo inietta nel lan_client.
+
+        Chiamato al setup e in _activate_lan_mode se il token sta per scadere.
+        Il token è ES256 firmato con la chiave OTA già nel firmware — il device
+        può verificarlo senza un nuovo provisioning.
+        """
+        try:
+            result = await self.client.get_lan_jwt(uid)
+            token = result.get("token", "")
+            if token:
+                self.lan_client._lan_token = token
+                _LOGGER.debug("DiyHome: LAN JWT ottenuto per %s (exp=%s)", uid, result.get("expires_at"))
+        except Exception as err:
+            _LOGGER.debug("DiyHome: LAN JWT fetch fallito per %s: %s", uid, err)
+
     # ── Comandi ───────────────────────────────────────────────────────────────
 
     async def async_send_command(
@@ -649,6 +667,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Avvia coordinator (SSE + watchdog + retry)
     await coordinator.async_start()
+
+    # Fetch LAN JWT per autenticare i comandi HTTP diretti al firmware
+    # Fatto dopo async_start perché la sessione HTTP è già pronta
+    if mdns_hostname and coordinator.data:
+        for uid in list(coordinator.data.keys()):
+            await coordinator._fetch_lan_jwt(uid)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
     return True
