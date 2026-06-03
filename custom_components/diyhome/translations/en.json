@@ -3,22 +3,19 @@
     "step": {
       "user": {
         "title": "Connect DiyHome",
-        "description": "Enter your DiyHome account credentials.",
+        "description": "Enter your DiyHome account credentials. If your device is on the local network, you can optionally enter its mDNS hostname (e.g. DIYHome_WT1_AABBCC.local) to enable direct LAN control.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "mdns_hostname": "mDNS hostname / local IP (optional)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "DiyHome device found",
+        "description": "A DiyHome device was found on your network ({hostname}). Enter your account credentials to connect it.",
         "data": {
           "email": "Email",
           "password": "Password"
-        }
-      },
-      "local_broker": {
-        "title": "Local MQTT Broker (optional)",
-        "description": "If your Home Assistant has the Mosquitto add-on installed on the same network as your device, you can configure direct LAN control. This enables real-time state updates and offline operation. Leave empty to use cloud-only mode.",
-        "data": {
-          "mqtt_enabled": "Enable local MQTT",
-          "mqtt_host": "Mosquitto host (IP or hostname)",
-          "mqtt_port": "Port",
-          "mqtt_username": "Username",
-          "mqtt_password": "Password",
-          "mqtt_tls": "Use TLS"
         }
       }
     },
@@ -26,10 +23,11 @@
       "invalid_auth": "Incorrect email or password.",
       "cannot_connect": "Unable to connect to DiyHome. Check your internet connection.",
       "unknown": "Unexpected error. Check Home Assistant logs.",
-      "mqtt_host_required": "Mosquitto host is required when local MQTT is enabled."
+      "no_uid": "Device found but UID missing. Try updating the firmware."
     },
     "abort": {
-      "already_configured": "DiyHome is already configured."
+      "already_configured": "DiyHome is already configured.",
+      "no_uid": "Device found but UID missing. Update the firmware and try again."
     },
     "create_entry": {
       "default": "DiyHome connected successfully. Your devices are now available in Home Assistant."
@@ -37,22 +35,12 @@
   },
   "options": {
     "step": {
-      "local_broker": {
-        "title": "Local MQTT Broker",
-        "description": "Configure direct LAN control via Mosquitto. Leave empty or disable to use cloud-only mode.",
-        "data": {
-          "mqtt_enabled": "Enable local MQTT",
-          "mqtt_host": "Mosquitto host (IP or hostname)",
-          "mqtt_port": "Port",
-          "mqtt_username": "Username",
-          "mqtt_password": "Password (leave empty to keep existing)",
-          "mqtt_tls": "Use TLS"
-        }
+      "init": {
+        "title": "DiyHome options",
+        "description": "No options to configure. The device is discovered automatically via mDNS."
       }
     },
-    "error": {
-      "mqtt_host_required": "Mosquitto host is required when local MQTT is enabled."
-    }
+    "error": {}
   },
   "entity": {
     "binary_sensor": {
