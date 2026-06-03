@@ -3,22 +3,19 @@
     "step": {
       "user": {
         "title": "Connetti DiyHome",
-        "description": "Inserisci le credenziali del tuo account DiyHome.",
+        "description": "Inserisci le credenziali del tuo account DiyHome. Se il device è sulla rete locale, puoi inserire facoltativamente il suo hostname mDNS (es. DIYHome_WT1_AABBCC.local) per abilitare il controllo diretto LAN.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "mdns_hostname": "Hostname mDNS / IP locale (opzionale)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Device DiyHome trovato",
+        "description": "È stato trovato un device DiyHome sulla tua rete ({hostname}). Inserisci le credenziali del tuo account per collegarlo.",
         "data": {
           "email": "Email",
           "password": "Password"
-        }
-      },
-      "local_broker": {
-        "title": "Broker MQTT locale (opzionale)",
-        "description": "Se Home Assistant ha il componente aggiuntivo Mosquitto installato nella stessa rete del device, puoi configurare il controllo LAN diretto. Questo abilita aggiornamenti di stato in tempo reale e il controllo offline. Lascia vuoto per usare solo la modalità cloud.",
-        "data": {
-          "mqtt_enabled": "Abilita MQTT locale",
-          "mqtt_host": "Host Mosquitto (IP o hostname)",
-          "mqtt_port": "Porta",
-          "mqtt_username": "Username",
-          "mqtt_password": "Password",
-          "mqtt_tls": "Usa TLS"
         }
       }
     },
@@ -26,10 +23,11 @@
       "invalid_auth": "Email o password non corretti.",
       "cannot_connect": "Impossibile connettersi a DiyHome. Controlla la tua connessione.",
       "unknown": "Errore imprevisto. Controlla i log di Home Assistant.",
-      "mqtt_host_required": "L'host Mosquitto è obbligatorio quando MQTT locale è abilitato."
+      "no_uid": "Device trovato ma UID mancante. Prova ad aggiornare il firmware."
     },
     "abort": {
-      "already_configured": "DiyHome è già configurato."
+      "already_configured": "DiyHome è già configurato.",
+      "no_uid": "Device trovato ma UID mancante. Aggiorna il firmware e riprova."
     },
     "create_entry": {
       "default": "DiyHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."
@@ -37,22 +35,12 @@
   },
   "options": {
     "step": {
-      "local_broker": {
-        "title": "Broker MQTT locale",
-        "description": "Configura il controllo LAN diretto tramite Mosquitto. Lascia vuoto o disabilita per usare solo la modalità cloud.",
-        "data": {
-          "mqtt_enabled": "Abilita MQTT locale",
-          "mqtt_host": "Host Mosquitto (IP o hostname)",
-          "mqtt_port": "Porta",
-          "mqtt_username": "Username",
-          "mqtt_password": "Password (lascia vuoto per mantenere quella esistente)",
-          "mqtt_tls": "Usa TLS"
-        }
+      "init": {
+        "title": "Opzioni DiyHome",
+        "description": "Nessuna opzione da configurare manualmente. Il device viene scoperto automaticamente tramite mDNS."
       }
     },
-    "error": {
-      "mqtt_host_required": "L'host Mosquitto è obbligatorio quando MQTT locale è abilitato."
-    }
+    "error": {}
   },
   "entity": {
     "binary_sensor": {
