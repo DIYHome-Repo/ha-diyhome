@@ -6,9 +6,8 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -32,7 +31,62 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=30)
-MQTT_CONNECT_TIMEOUT = 10  # secondi
+MQTT_CONNECT_TIMEOUT = 10       # secondi attesa connessione iniziale
+MQTT_OFFLINE_THRESHOLD = 45     # secondi di disconnessione prima di avviare SSE fallback
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Normalizzatori payload MQTT → struttura dati attesa da sensor.py / switch.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _norm_tank(payload: dict) -> dict:
+    """Normalizza payload tank MQTT → device['tank'] atteso da sensor.py."""
+    return {
+        "level_pct": (
+            payload.get("level_pct")
+            or payload.get("percentage")
+            or payload.get("level")
+        ),
+        "liters": payload.get("liters") or payload.get("volume"),
+        "temperature": (
+            payload.get("temperature")
+            or payload.get("temp")
+            or payload.get("ambientTemp")
+        ),
+    }
+
+
+def _norm_flow(payload: dict) -> dict:
+    """Normalizza payload flow MQTT → device['flow'] atteso da sensor.py."""
+    return {
+        "flow_in_rate": (
+            payload.get("flow_in_rate")
+            or payload.get("in")
+            or payload.get("flowIn")
+            or payload.get("flow_in")
+        ),
+        "flow_out_rate": (
+            payload.get("flow_out_rate")
+            or payload.get("out")
+            or payload.get("flowOut")
+            or payload.get("flow_out")
+        ),
+    }
+
+
+def _norm_diagnostics(existing: dict, payload: dict) -> dict:
+    """Fonde payload heartbeat nei diagnostics → device['diagnostics']."""
+    diag = dict(existing or {})
+    wifi = payload.get("wifi", {}) if isinstance(payload.get("wifi"), dict) else {}
+    diag.update({
+        k: v for k, v in {
+            "rssi": payload.get("rssi") or wifi.get("rssi"),
+            "uptime": payload.get("uptime"),
+            "ssid": payload.get("ssid") or wifi.get("ssid"),
+            "ip_address": payload.get("ip") or payload.get("ip_address") or wifi.get("ip"),
+        }.items() if v is not None
+    })
+    return diag
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +105,9 @@ class DiyHomeMqttLocal:
         password: str,
         use_tls: bool,
         uids: list[str],
-        on_message_cb,  # coroutine (topic: str, payload: bytes) -> None
+        on_message_cb,   # coroutine (topic: str, payload: bytes) -> None
+        on_connect_cb,   # callable () -> None  [thread-safe, called when connected]
+        on_disconnect_cb, # callable () -> None [thread-safe, called on disconnect]
     ) -> None:
         self._hass = hass
         self._host = host
@@ -61,6 +117,8 @@ class DiyHomeMqttLocal:
         self._use_tls = use_tls
         self._uids = list(uids)
         self._on_message_cb = on_message_cb
+        self._on_connect_cb = on_connect_cb
+        self._on_disconnect_cb = on_disconnect_cb
         self._client = None
         self._connected_event = threading.Event()
         self._connected = False
@@ -77,13 +135,16 @@ class DiyHomeMqttLocal:
         self._thread.start()
 
     def stop(self) -> None:
+        """Ferma il thread in modo sicuro — chiamabile più volte."""
         self._stop_event.set()
+        self._connected = False
         if self._client:
             try:
                 self._client.disconnect()
                 self._client.loop_stop()
             except Exception:
                 pass
+        self._client = None
 
     def publish(self, topic: str, payload: str | bytes) -> None:
         """Pubblica un comando MQTT (thread-safe)."""
@@ -94,6 +155,7 @@ class DiyHomeMqttLocal:
                 _LOGGER.debug("DiyHome MQTT publish error: %s", err)
 
     def wait_connected(self, timeout: float = MQTT_CONNECT_TIMEOUT) -> bool:
+        """Blocca fino alla connessione (o timeout). Usare in executor."""
         return self._connected_event.wait(timeout=timeout)
 
     # ── Thread interno ────────────────────────────────────────────────────────
@@ -103,6 +165,7 @@ class DiyHomeMqttLocal:
             import paho.mqtt.client as mqtt
         except ImportError:
             _LOGGER.error("DiyHome: paho-mqtt non disponibile — MQTT locale disabilitato")
+            self._connected_event.set()  # sblocca wait_connected
             return
 
         client = mqtt.Client(
@@ -124,7 +187,6 @@ class DiyHomeMqttLocal:
             try:
                 client.connect(self._host, self._port, keepalive=60)
                 client.loop_start()
-                # Aspetta disconnect o stop
                 while not self._stop_event.is_set():
                     time.sleep(1)
                 client.loop_stop()
@@ -132,6 +194,7 @@ class DiyHomeMqttLocal:
             except Exception as err:
                 _LOGGER.debug("DiyHome MQTT connect error (%s), retry in 30s", err)
                 self._connected = False
+                self._connected_event.set()  # sblocca wait con _connected=False
                 for _ in range(30):
                     if self._stop_event.is_set():
                         return
@@ -146,7 +209,11 @@ class DiyHomeMqttLocal:
             )
             for uid in self._uids:
                 client.subscribe(f"diyhome/{uid}/#", qos=0)
-                _LOGGER.debug("DiyHome MQTT: subscribed diyhome/%s/#", uid)
+            if self._on_connect_cb:
+                try:
+                    self._on_connect_cb()
+                except Exception:
+                    pass
         else:
             _LOGGER.warning("DiyHome MQTT locale: connect failed rc=%s", rc)
             self._connected_event.set()
@@ -155,6 +222,11 @@ class DiyHomeMqttLocal:
         self._connected = False
         if rc != 0:
             _LOGGER.debug("DiyHome MQTT locale: disconnesso (rc=%s)", rc)
+        if self._on_disconnect_cb:
+            try:
+                self._on_disconnect_cb()
+            except Exception:
+                pass
 
     def _on_message(self, client, userdata, msg) -> None:
         """Callback paho — chiama la coroutine nel loop HA (thread-safe)."""
@@ -194,6 +266,10 @@ class DualModeCoordinator(DataUpdateCoordinator):
         self._mqtt: DiyHomeMqttLocal | None = None
         self.mqtt_mode = False
 
+        # SSE runtime fallback
+        self._sse_task: asyncio.Task | None = None
+        self._mqtt_disconnect_at: float | None = None
+
     # ── Setup MQTT locale ─────────────────────────────────────────────────────
 
     async def async_setup_mqtt(self) -> bool:
@@ -216,6 +292,8 @@ class DualModeCoordinator(DataUpdateCoordinator):
             use_tls=opts.get(CONF_MQTT_TLS, False),
             uids=uids,
             on_message_cb=self._handle_mqtt_message,
+            on_connect_cb=self._on_mqtt_connect,
+            on_disconnect_cb=self._on_mqtt_disconnect,
         )
 
         self._mqtt.start()
@@ -228,15 +306,16 @@ class DualModeCoordinator(DataUpdateCoordinator):
         if connected and self._mqtt.is_connected():
             self.mqtt_mode = True
             _LOGGER.info(
-                "DiyHome: modalità MQTT locale attiva (%s device)",
-                len(uids),
+                "DiyHome: modalità MQTT locale attiva (%s device)", len(uids)
             )
             return True
         else:
+            # Timeout: ferma il thread (fix lifecycle leak) e torna al cloud
             _LOGGER.warning(
                 "DiyHome: MQTT locale non raggiungibile entro %ss — modalità cloud",
                 MQTT_CONNECT_TIMEOUT,
             )
+            self._mqtt.stop()
             self._mqtt = None
             return False
 
@@ -253,10 +332,63 @@ class DualModeCoordinator(DataUpdateCoordinator):
             return True
         return False
 
+    # ── Gestione runtime fallback SSE ─────────────────────────────────────────
+
+    def _on_mqtt_connect(self) -> None:
+        """Chiamato dal thread MQTT quando (ri)connesso — ferma SSE se attivo."""
+        self.mqtt_mode = True
+        self._mqtt_disconnect_at = None
+        if self._sse_task and not self._sse_task.done():
+            _LOGGER.info("DiyHome: MQTT locale riconnesso — fermo SSE fallback")
+            self._sse_task.cancel()
+            self._sse_task = None
+
+    def _on_mqtt_disconnect(self) -> None:
+        """Chiamato dal thread MQTT quando disconnesso — schedula SSE fallback."""
+        self.mqtt_mode = False
+        self._mqtt_disconnect_at = time.monotonic()
+        # Schedula il check nel loop HA (thread-safe)
+        try:
+            self.hass.loop.call_soon_threadsafe(self._schedule_sse_fallback)
+        except Exception:
+            pass
+
+    def _schedule_sse_fallback(self) -> None:
+        """Avvia il task SSE fallback se non già attivo."""
+        if self._sse_task and not self._sse_task.done():
+            return  # SSE già attivo
+        _LOGGER.info(
+            "DiyHome: MQTT locale disconnesso — avvio SSE fallback"
+        )
+        self._sse_task = self.hass.async_create_task(
+            _listen_sse(self.hass, self._entry, self),
+            name=f"diyhome_sse_fallback_{self._entry.entry_id}",
+        )
+
+    def set_sse_task(self, task: asyncio.Task | None) -> None:
+        """Registra il task SSE esterno (quando MQTT non è attivo allo startup)."""
+        self._sse_task = task
+
+    def cancel_sse_task(self) -> None:
+        if self._sse_task and not self._sse_task.done():
+            self._sse_task.cancel()
+            self._sse_task = None
+
     # ── Handler messaggi MQTT ─────────────────────────────────────────────────
 
     async def _handle_mqtt_message(self, topic: str, raw: bytes) -> None:
-        """Processa un messaggio MQTT locale e aggiorna coordinator.data."""
+        """Processa un messaggio MQTT locale e aggiorna coordinator.data.
+
+        Struttura dati normalizzata per compatibilità con sensor.py / switch.py:
+          device["tank"]   = {level_pct, liters, temperature}
+          device["flow"]   = {flow_in_rate, flow_out_rate}
+          device["valve1"] = {is_open, name}
+          device["valve2"] = {is_open}
+          device["zones"]  = [{index, is_active, ...}]
+          device["pump"]   = {mode, relay_on, is_locked}
+          device["diagnostics"] = {rssi, uptime, ssid, ip_address}
+          device["online"] = bool
+        """
         try:
             parts = topic.split("/")
             # Formato: diyhome/{uid}/{type}[/{subtype}]
@@ -268,7 +400,7 @@ class DualModeCoordinator(DataUpdateCoordinator):
                 return
 
             msg_type = parts[2] if len(parts) > 2 else ""
-            subtype = parts[3] if len(parts) > 3 else ""
+            subtype   = parts[3] if len(parts) > 3 else ""
 
             try:
                 payload = json.loads(raw.decode("utf-8"))
@@ -276,56 +408,65 @@ class DualModeCoordinator(DataUpdateCoordinator):
                 payload = raw.decode("utf-8", errors="replace").strip()
 
             new_data = dict(self.data)
-            device = dict(new_data.get(uid, {}))
+            device   = dict(new_data.get(uid, {}))
+            updated  = False
 
-            updated = False
-
+            # ── availability ──────────────────────────────────────────────────
             if msg_type == "availability":
                 online = (payload == "online") if isinstance(payload, str) else bool(payload)
                 if device.get("online") != online:
                     device["online"] = online
                     updated = True
 
-            elif msg_type == "valve" and subtype == "state":
-                if isinstance(payload, dict):
-                    valve = dict(device.get("valve1") or {})
-                    is_open = payload.get("is_open", payload.get("open", False))
-                    if valve.get("is_open") != is_open:
-                        valve["is_open"] = is_open
-                        device["valve1"] = valve
-                        updated = True
+            # ── valve/state ───────────────────────────────────────────────────
+            elif msg_type == "valve" and subtype == "state" and isinstance(payload, dict):
+                valve = dict(device.get("valve1") or {})
+                is_open = payload.get("is_open", payload.get("open", False))
+                if valve.get("is_open") != is_open:
+                    valve["is_open"] = is_open
+                    device["valve1"] = valve
+                    updated = True
 
-            elif msg_type == "valve2" and subtype == "state":
-                if isinstance(payload, dict):
-                    valve = dict(device.get("valve2") or {})
-                    is_open = payload.get("is_open", payload.get("open", False))
-                    if valve.get("is_open") != is_open:
-                        valve["is_open"] = is_open
-                        device["valve2"] = valve
-                        updated = True
+            # ── valve2/state ──────────────────────────────────────────────────
+            elif msg_type == "valve2" and subtype == "state" and isinstance(payload, dict):
+                valve = dict(device.get("valve2") or {})
+                is_open = payload.get("is_open", payload.get("open", False))
+                if valve.get("is_open") != is_open:
+                    valve["is_open"] = is_open
+                    device["valve2"] = valve
+                    updated = True
 
+            # ── telemetry/* ───────────────────────────────────────────────────
             elif msg_type == "telemetry":
                 if subtype == "tank" and isinstance(payload, dict):
-                    tel = dict(device.get("telemetry") or {})
-                    tel.update({
-                        k: payload[k]
-                        for k in ("percentage", "liters", "ambientTemp")
-                        if k in payload
-                    })
-                    device["telemetry"] = tel
+                    # Normalizza nella struttura attesa da sensor.py: device["tank"]
+                    device["tank"] = _norm_tank(payload)
                     updated = True
 
                 elif subtype == "flow" and isinstance(payload, dict):
-                    device["flow"] = {
-                        "in": payload.get("in", payload.get("flowIn")),
-                        "out": payload.get("out", payload.get("flowOut")),
-                    }
+                    # Normalizza nella struttura attesa da sensor.py: device["flow"]
+                    device["flow"] = _norm_flow(payload)
                     updated = True
 
-                elif subtype == "heartbeat":
+                elif subtype == "heartbeat" and isinstance(payload, dict):
+                    # Heartbeat → mark online + aggiorna diagnostics
                     device["online"] = True
+                    device["diagnostics"] = _norm_diagnostics(
+                        device.get("diagnostics"), payload
+                    )
+                    if "firmware" in payload:
+                        device["firmware"] = payload["firmware"]
+                    # Consumo giornaliero se incluso nell'heartbeat
+                    if "liters_in" in payload or "liters_out" in payload:
+                        cons = dict(device.get("consumption_today") or {})
+                        if "liters_in" in payload:
+                            cons["liters_in"] = payload["liters_in"]
+                        if "liters_out" in payload:
+                            cons["liters_out"] = payload["liters_out"]
+                        device["consumption_today"] = cons
                     updated = True
 
+            # ── irrigation/state ──────────────────────────────────────────────
             elif msg_type == "irrigation" and subtype == "state":
                 if isinstance(payload, list):
                     device["zones"] = payload
@@ -334,10 +475,10 @@ class DualModeCoordinator(DataUpdateCoordinator):
                     device["zones"] = payload["zones"]
                     updated = True
 
-            elif msg_type == "pump":
-                if isinstance(payload, dict):
-                    device["pump"] = payload
-                    updated = True
+            # ── pump ─────────────────────────────────────────────────────────
+            elif msg_type == "pump" and not subtype and isinstance(payload, dict):
+                device["pump"] = payload
+                updated = True
 
             if updated:
                 new_data[uid] = device
@@ -346,7 +487,7 @@ class DualModeCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.debug("DiyHome MQTT message parse error (%s): %s", topic, err)
 
-    # ── REST polling (safety-net) ──────────────────────────────────────────────
+    # ── REST polling (safety-net / fallback) ──────────────────────────────────
 
     async def _async_update_data(self) -> dict:
         try:
@@ -396,7 +537,7 @@ class DualModeCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"DiyHome API error: {err}") from err
 
 
-# Alias per compatibilità con switch.py/sensor.py/binary_sensor.py esistenti
+# Alias per compatibilità con switch.py / sensor.py / binary_sensor.py
 DiyHomeCoordinator = DualModeCoordinator
 
 
@@ -437,17 +578,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Avvia MQTT locale se configurato
     mqtt_active = await coordinator.async_setup_mqtt()
 
-    # Avvia SSE solo se MQTT locale NON è attivo (evita connessioni doppie)
     if not mqtt_active:
+        # Nessun MQTT locale: SSE come sorgente push primaria
         sse_task = hass.async_create_task(
             _listen_sse(hass, entry, coordinator),
             name=f"diyhome_sse_{entry.entry_id}",
         )
         runtime_data.sse_task = sse_task
+        coordinator.set_sse_task(sse_task)
     else:
-        _LOGGER.info(
-            "DiyHome: SSE disabilitato (MQTT locale attivo)"
-        )
+        _LOGGER.info("DiyHome: SSE non avviato — MQTT locale attivo (si avvierà su disconnect)")
 
     # Ricarica al cambio opzioni (es. broker MQTT)
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
@@ -464,21 +604,23 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     runtime_data: DiyHomeRuntimeData = entry.runtime_data
 
-    sse_task = runtime_data.sse_task
-    if sse_task and not sse_task.done():
-        sse_task.cancel()
+    # Cancella SSE
+    runtime_data.coordinator.cancel_sse_task()
+    if runtime_data.sse_task and not runtime_data.sse_task.done():
+        runtime_data.sse_task.cancel()
         try:
-            await sse_task
+            await runtime_data.sse_task
         except (asyncio.CancelledError, Exception):
             pass
 
+    # Ferma MQTT locale
     runtime_data.coordinator.stop_mqtt()
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SSE listener (fallback quando MQTT locale non è attivo)
+# SSE listener (fallback quando MQTT locale non è attivo / si disconnette)
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _listen_sse(
@@ -486,7 +628,7 @@ async def _listen_sse(
     entry: ConfigEntry,
     coordinator: DualModeCoordinator,
 ) -> None:
-    """Long-running task SSE: aggiornamento real-time — fallback quando MQTT locale non disponibile."""
+    """Long-running task SSE — fallback quando MQTT locale non disponibile."""
     import aiohttp
 
     stream_url = f"{CLOUD_URL}/api/ha/stream"
@@ -495,6 +637,11 @@ async def _listen_sse(
     _LOGGER.debug("DiyHome SSE: avvio listener %s", stream_url)
 
     while True:
+        # Se MQTT locale è tornato attivo, esci — il coordinator fermerà il task
+        if coordinator.mqtt_mode:
+            _LOGGER.debug("DiyHome SSE: MQTT locale attivo, SSE termina")
+            return
+
         try:
             async with aiohttp.ClientSession() as http_session:
                 async with http_session.get(
@@ -511,6 +658,11 @@ async def _listen_sse(
                     current_event: str | None = None
 
                     async for raw_line in resp.content:
+                        # Se MQTT locale è tornato, interrompi SSE
+                        if coordinator.mqtt_mode:
+                            _LOGGER.debug("DiyHome SSE: MQTT riattivo, esco dal loop SSE")
+                            return
+
                         line = raw_line.decode("utf-8").strip()
 
                         if not line or line.startswith(":"):
