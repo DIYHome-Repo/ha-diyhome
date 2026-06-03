@@ -1,6 +1,7 @@
-"""Config flow DiyHome — email + password + mDNS hostname (opzionale) + zeroconf auto-discovery."""
+"""Config flow DiyHome — login cloud + auto-discovery LAN via zeroconf."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -19,14 +20,14 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Regex per rilevare un IP puro (es. "192.168.1.248")
+# Regex per rilevare IP puro (es. "192.168.1.248")
 _IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 
+# Form setup — solo email e password, nessun campo IP/hostname
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_MDNS_HOSTNAME, default=""): str,
     }
 )
 
@@ -37,11 +38,10 @@ async def _resolve_ip_to_local_hostname(
     """Se host è un IP puro, interroga /mdns-state sul device per ottenere
     il nome .local stabile che non cambia dopo reset router.
 
-    Ritorna l'hostname .local se trovato, altrimenti ritorna host invariato.
     Il device espone /mdns-state senza autenticazione (endpoint pubblico).
     """
     if not host or not _IP_RE.match(host):
-        return host  # già hostname .local o vuoto — non modificare
+        return host
 
     try:
         async with session.get(
@@ -67,12 +67,16 @@ async def _resolve_ip_to_local_hostname(
             host,
             err,
         )
-
-    return host  # fallback: usa IP
+    return host
 
 
 class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow DiyHome — autenticazione cloud + auto-discovery LAN via zeroconf."""
+    """Config flow DiyHome:
+    1. Zeroconf auto-discovery (HA rileva automaticamente il device sulla LAN)
+    2. Setup manuale: solo email + password → il sistema cerca il device in automatico
+       - login cloud → fetch UIDs → scan zeroconf 5s → hostname trovato automaticamente
+       - se non trovato: cloud mode (LAN configurabile dopo da "Configura")
+    """
 
     VERSION = 2
 
@@ -85,16 +89,13 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_zeroconf(
         self, discovery_info: zeroconf.ZeroconfServiceInfo
     ) -> config_entries.ConfigFlowResult:
-        """Chiamato da HA quando trova _diyhome._tcp sulla LAN."""
+        """Chiamato da HA quando trova _diyhome._tcp sulla LAN — discovery automatica."""
         uid = discovery_info.properties.get("uid", "")
-        hostname = discovery_info.hostname.rstrip(".")  # es. "DIYHome_WT1_AABBCC.local"
+        hostname = discovery_info.hostname.rstrip(".")
 
         if not uid:
             return self.async_abort(reason="no_uid")
 
-        # Previeni duplicati: usa l'UID come unique_id.
-        # Se l'utente aveva già una installazione manuale con IP, _abort_if_unique_id_configured
-        # aggiorna il CONF_MDNS_HOSTNAME su quella voce esistente con l'hostname .local corretto.
         await self.async_set_unique_id(uid)
         self._abort_if_unique_id_configured(
             updates={CONF_MDNS_HOSTNAME: hostname}
@@ -102,7 +103,6 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._discovered_hostname = hostname
         self.context["title_placeholders"] = {"name": f"DIYHome ({hostname})"}
-
         return await self.async_step_zeroconf_confirm()
 
     async def async_step_zeroconf_confirm(
@@ -137,9 +137,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             errors["base"] = "invalid_auth"
                         else:
                             errors["base"] = "cannot_connect"
-            except aiohttp.ClientConnectorError:
-                errors["base"] = "cannot_connect"
-            except aiohttp.ServerTimeoutError:
+            except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError):
                 errors["base"] = "cannot_connect"
             except Exception as err:
                 _LOGGER.exception("DiyHome login error: %s", err)
@@ -155,16 +153,19 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    # ── Setup manuale (fallback se zeroconf non disponibile) ─────────────────
+    # ── Setup manuale — solo email + password ─────────────────────────────────
 
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Setup manuale: form email + password + hostname mDNS opzionale.
+        """Setup manuale: email + password → il sistema trova il device in automatico.
 
-        Se l'utente inserisce un IP (es. 192.168.1.248), il sistema interroga
-        automaticamente il device per ottenere il nome .local stabile e salva
-        quello — così l'integrazione non si rompe dopo un reset del router.
+        Dopo il login il sistema:
+        1. Recupera la lista device dall'account cloud
+        2. Scansiona la LAN via zeroconf per 5s
+        3. Abbina il device per UID → salva hostname .local automaticamente
+        4. Se non trovato (Docker senza multicast, rete diversa): modalità cloud
+           L'utente può aggiungere l'hostname dopo da Impostazioni → Configura.
         """
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
@@ -174,7 +175,6 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email: str = user_input[CONF_EMAIL].strip().lower()
             password: str = user_input[CONF_PASSWORD]
-            raw_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
 
             try:
                 async with aiohttp.ClientSession() as session:
@@ -185,52 +185,68 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
+                            access_token = data["access_token"]
 
-                            # ── Auto-risoluzione IP → hostname .local ────────
-                            # Se l'utente ha inserito un IP, chiediamo al device
-                            # il suo hostname mDNS stabile prima di salvarlo.
-                            # Questo garantisce che dopo un reset router l'hostname
-                            # .local si risolva sempre al nuovo IP automaticamente.
-                            mdns_hostname = await _resolve_ip_to_local_hostname(
-                                session, raw_hostname
+                            # ── Recupera UIDs device dal cloud ───────────────
+                            device_uids = await self._fetch_device_uids(
+                                session, access_token
                             )
-                            if mdns_hostname != raw_hostname:
-                                _LOGGER.info(
-                                    "DiyHome: IP %s convertito automaticamente in hostname "
-                                    "mDNS stabile %s",
-                                    raw_hostname,
-                                    mdns_hostname,
+
+                            # ── Scan zeroconf automatico (max 5s) ────────────
+                            # Cerca _diyhome._tcp.local. sulla LAN e abbina
+                            # per UID con i device dell'account. Zero input utente.
+                            mdns_hostname = ""
+                            if device_uids:
+                                mdns_hostname = await self._scan_zeroconf_for_device(
+                                    set(device_uids)
                                 )
+                                if mdns_hostname:
+                                    _LOGGER.info(
+                                        "DiyHome: device trovato automaticamente "
+                                        "sulla LAN → %s",
+                                        mdns_hostname,
+                                    )
+                                else:
+                                    _LOGGER.info(
+                                        "DiyHome: device non trovato sulla LAN — "
+                                        "modalità cloud attiva. Puoi aggiungere "
+                                        "l'hostname in Impostazioni → Configura."
+                                    )
 
-                            # FIX P2: recupera UID dal cloud per impostare unique_id.
-                            uid = await self._fetch_first_uid(
-                                session, data["access_token"]
-                            )
-                            if uid:
-                                await self.async_set_unique_id(uid)
+                            # ── Imposta unique_id dal primo device ───────────
+                            first_uid = device_uids[0] if device_uids else ""
+                            if first_uid:
+                                await self.async_set_unique_id(first_uid)
                                 self._abort_if_unique_id_configured(
                                     updates={CONF_MDNS_HOSTNAME: mdns_hostname}
+                                    if mdns_hostname
+                                    else {}
                                 )
+
+                            title = (
+                                f"DIYHome ({mdns_hostname})"
+                                if mdns_hostname
+                                else email
+                            )
                             return self.async_create_entry(
-                                title=email,
+                                title=title,
                                 data={
-                                    "access_token": data["access_token"],
+                                    "access_token": access_token,
                                     "refresh_token": data.get("refresh_token", ""),
                                     "email": email,
                                     CONF_MDNS_HOSTNAME: mdns_hostname,
                                 },
                             )
+
                         if resp.status in (401, 403):
                             errors["base"] = "invalid_auth"
                         else:
                             errors["base"] = "cannot_connect"
 
-            except aiohttp.ClientConnectorError:
-                errors["base"] = "cannot_connect"
-            except aiohttp.ServerTimeoutError:
+            except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError):
                 errors["base"] = "cannot_connect"
             except Exception as err:
-                _LOGGER.exception("DiyHome login error: %s", err)
+                _LOGGER.exception("DiyHome setup error: %s", err)
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -239,10 +255,12 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def _fetch_first_uid(
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    async def _fetch_device_uids(
         self, session: aiohttp.ClientSession, token: str
-    ) -> str:
-        """Recupera l'UID del primo device dal cloud per impostare unique_id."""
+    ) -> list[str]:
+        """Recupera la lista UID device dall'account cloud."""
         try:
             async with session.get(
                 f"{CLOUD_URL}/api/ha/devices",
@@ -251,10 +269,81 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ) as resp:
                 if resp.status == 200:
                     devices = await resp.json()
-                    if isinstance(devices, list) and devices:
-                        return str(devices[0].get("uid", ""))
+                    if isinstance(devices, list):
+                        return [
+                            str(d["uid"])
+                            for d in devices
+                            if d.get("uid")
+                        ]
         except Exception:
             pass
+        return []
+
+    async def _scan_zeroconf_for_device(self, known_uids: set[str]) -> str:
+        """Scansiona la LAN via zeroconf (max 5s) cercando _diyhome._tcp.local.
+
+        Abbina il device per UID TXT record con i device dell'account.
+        Ritorna l'hostname .local se trovato, stringa vuota altrimenti.
+        Graceful: qualsiasi errore → ritorna "" (cloud mode).
+        """
+        if not known_uids:
+            return ""
+
+        try:
+            from homeassistant.components.zeroconf import async_get_async_instance
+            from zeroconf import ServiceStateChange
+            from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+
+            aiozc = await async_get_async_instance(self.hass)
+            found_names: list[str] = []
+            evt = asyncio.Event()
+
+            def _handler(
+                zeroconf_instance,
+                service_type: str,
+                name: str,
+                state_change: ServiceStateChange,
+            ) -> None:
+                if state_change in (
+                    ServiceStateChange.Added,
+                    ServiceStateChange.Updated,
+                ):
+                    if name not in found_names:
+                        found_names.append(name)
+                    evt.set()
+
+            browser = AsyncServiceBrowser(
+                aiozc.zeroconf,
+                "_diyhome._tcp.local.",
+                handlers=[_handler],
+            )
+
+            try:
+                await asyncio.wait_for(evt.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                browser.cancel()
+
+            # Interroga le info per ogni servizio trovato e abbina per UID
+            for name in found_names:
+                info = AsyncServiceInfo("_diyhome._tcp.local.", name)
+                try:
+                    if await info.async_request(aiozc.zeroconf, 3000):
+                        props = info.properties or {}
+                        uid_bytes = props.get(b"uid") or props.get("uid", b"")
+                        if isinstance(uid_bytes, bytes):
+                            uid = uid_bytes.decode("utf-8", errors="replace")
+                        else:
+                            uid = str(uid_bytes)
+                        if uid in known_uids and info.server:
+                            return info.server.rstrip(".")
+                except Exception:
+                    continue
+
+        except Exception as err:
+            _LOGGER.debug("DiyHome: zeroconf scan: %s", err)
+
         return ""
 
     @staticmethod
@@ -265,7 +354,7 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow — aggiorna hostname mDNS con auto-risoluzione IP→.local."""
+    """Options flow — aggiorna hostname LAN con auto-risoluzione IP→.local."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -273,7 +362,6 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Mostra il campo hostname mDNS e auto-risolve l'IP se necessario."""
         current_hostname: str = (
             self._config_entry.options.get(CONF_MDNS_HOSTNAME)
             or self._config_entry.data.get(CONF_MDNS_HOSTNAME, "")
@@ -282,10 +370,11 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             new_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
 
-            # Auto-risoluzione: se l'utente ha incollato un IP, convertilo subito
             if new_hostname:
                 async with aiohttp.ClientSession() as session:
-                    resolved = await _resolve_ip_to_local_hostname(session, new_hostname)
+                    resolved = await _resolve_ip_to_local_hostname(
+                        session, new_hostname
+                    )
                     if resolved != new_hostname:
                         _LOGGER.info(
                             "DiyHome options: IP %s convertito automaticamente in %s",

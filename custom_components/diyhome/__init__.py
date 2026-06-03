@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.2.9 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.3.0 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio

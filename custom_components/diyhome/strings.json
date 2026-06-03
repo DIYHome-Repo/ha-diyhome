@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "Connect DiyHome",
-        "description": "Enter your DiyHome account credentials. If your device is on the local network, you can optionally enter its mDNS hostname (e.g. DIYHome_WT1_AABBCC.local) to enable direct LAN control.",
+        "description": "Enter your DiyHome account credentials. After login, the system will automatically search for your device on the local network and enable direct LAN control (sub-second latency). If not found, cloud mode will be used — you can add the device later from Settings → Configure.",
         "data": {
           "email": "Email",
-          "password": "Password",
-          "mdns_hostname": "mDNS hostname / local IP (optional)"
+          "password": "Password"
         }
       },
       "zeroconf_confirm": {
