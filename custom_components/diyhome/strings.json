@@ -36,8 +36,11 @@
   "options": {
     "step": {
       "init": {
-        "title": "DiyHome options",
-        "description": "No options to configure. The device is discovered automatically via mDNS."
+        "title": "DiyHome — LAN settings",
+        "description": "Set the device hostname or IP to enable direct LAN control (sub-second latency). If you enter a plain IP address, the system will automatically convert it to a stable mDNS hostname so it keeps working even after a router reset.",
+        "data": {
+          "mdns_hostname": "Device hostname or IP (e.g. DIYHome_WT1_AABBCC.local)"
+        }
       }
     },
     "error": {}
