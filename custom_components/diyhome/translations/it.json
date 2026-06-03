@@ -8,18 +8,50 @@
           "email": "Email",
           "password": "Password"
         }
+      },
+      "local_broker": {
+        "title": "Broker MQTT locale (opzionale)",
+        "description": "Se Home Assistant ha il componente aggiuntivo Mosquitto installato nella stessa rete del device, puoi configurare il controllo LAN diretto. Questo abilita aggiornamenti di stato in tempo reale e il controllo offline. Lascia vuoto per usare solo la modalità cloud.",
+        "data": {
+          "mqtt_enabled": "Abilita MQTT locale",
+          "mqtt_host": "Host Mosquitto (IP o hostname)",
+          "mqtt_port": "Porta",
+          "mqtt_username": "Username",
+          "mqtt_password": "Password",
+          "mqtt_tls": "Usa TLS"
+        }
       }
     },
     "error": {
       "invalid_auth": "Email o password non corretti.",
       "cannot_connect": "Impossibile connettersi a DiyHome. Controlla la tua connessione.",
-      "unknown": "Errore imprevisto. Controlla i log di Home Assistant."
+      "unknown": "Errore imprevisto. Controlla i log di Home Assistant.",
+      "mqtt_host_required": "L'host Mosquitto è obbligatorio quando MQTT locale è abilitato."
     },
     "abort": {
       "already_configured": "DiyHome è già configurato."
     },
     "create_entry": {
       "default": "DiyHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "local_broker": {
+        "title": "Broker MQTT locale",
+        "description": "Configura il controllo LAN diretto tramite Mosquitto. Lascia vuoto o disabilita per usare solo la modalità cloud.",
+        "data": {
+          "mqtt_enabled": "Abilita MQTT locale",
+          "mqtt_host": "Host Mosquitto (IP o hostname)",
+          "mqtt_port": "Porta",
+          "mqtt_username": "Username",
+          "mqtt_password": "Password (lascia vuoto per mantenere quella esistente)",
+          "mqtt_tls": "Usa TLS"
+        }
+      }
+    },
+    "error": {
+      "mqtt_host_required": "L'host Mosquitto è obbligatorio quando MQTT locale è abilitato."
     }
   },
   "entity": {
