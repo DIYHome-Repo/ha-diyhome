@@ -668,6 +668,18 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                 current_event = line[6:].strip()
                                 continue
 
+                            # FIX v2.3.3: su (ri)connessione SSE forza refresh immediato.
+                            # Il backend manda "event: connected" + push stato device subito dopo.
+                            # Il refresh qui garantisce che anche se il push arriva leggermente
+                            # in ritardo, HA abbia lo stato corretto entro pochi secondi.
+                            if line.startswith("data:") and current_event == "connected":
+                                _LOGGER.debug(
+                                    "DiyHome cloud SSE: connessione (ri)stabilita → refresh immediato"
+                                )
+                                self.hass.async_create_task(self.async_request_refresh())
+                                current_event = None
+                                continue
+
                             if line.startswith("data:") and current_event in _CLOUD_REALTIME_EVENTS:
                                 try:
                                     # FIX P5 anti-stale: se un update LAN è avvenuto < 2s fa,
