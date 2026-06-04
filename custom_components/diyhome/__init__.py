@@ -209,6 +209,18 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             self._session = aiohttp.ClientSession()
             self.lan_client.session = self._session
 
+        # FIX L1 (Bug A): se async_setup_entry ha già confermato LAN mode con una
+        # GET riuscita (lan_mode=True), non ri-sondare. Il double probe causava:
+        #   probe1 OK → setup entità (5-20s) → probe2 FAIL (device HTTP occupato,
+        #   mDNS lento su Docker) → _activate_cloud_mode() → sovrascrive lan_mode=True
+        #   → retry loop attende 60s → utente vede "cloud" per 60s anche se in LAN.
+        if self.lan_mode:
+            _LOGGER.debug(
+                "DiyHome: async_start: LAN mode già confermato da setup, skip re-probe"
+            )
+            await self._activate_lan_mode()
+            return
+
         lan_ok = await self._probe_lan()
         if lan_ok:
             await self._activate_lan_mode()
@@ -486,9 +498,16 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         Se mdns_hostname è vuoto (setup senza IP, zeroconf non trovato al boot),
         prova prima zeroconf, poi estrae l'IP dai dati cloud come fallback.
         Quando trovato: aggiorna entry.data per persistere tra riavvii HA.
+
+        FIX L2 (Bug B): primo tentativo dopo 5s (non 60s).
+        Se la causa è un probe transitorio fallito in async_start() (device
+        momentaneamente occupato), riproviamo subito invece di aspettare 60s.
+        I tentativi successivi usano LAN_RETRY_INTERVAL (60s) per non sovraccaricare.
         """
+        first_attempt = True
         while not self._stopping and not self.lan_mode:
-            await asyncio.sleep(LAN_RETRY_INTERVAL)
+            await asyncio.sleep(5 if first_attempt else LAN_RETRY_INTERVAL)
+            first_attempt = False
             if self._stopping or self.lan_mode:
                 return
 
