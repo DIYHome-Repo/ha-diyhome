@@ -36,38 +36,81 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opzioni DiyHome",
-        "description": "Nessuna opzione da configurare manualmente. Il device viene scoperto automaticamente tramite mDNS."
+        "title": "DiyHome — Impostazioni LAN",
+        "description": "Inserisci l'IP del device per abilitare il controllo diretto LAN (latenza sub-secondo). Lascia vuoto per usare solo la modalità cloud.",
+        "data": {
+          "mdns_hostname": "IP o hostname del device (es. 192.168.1.248)"
+        }
       }
     },
     "error": {}
   },
   "entity": {
     "binary_sensor": {
-      "online": { "name": "Online" },
-      "alarm": { "name": "Allarme" },
-      "irrigation_active": { "name": "Irrigazione in corso" },
-      "pump_relay": { "name": "Relè pompa" }
+      "online": {
+        "name": "Online"
+      },
+      "alarm": {
+        "name": "Allarme"
+      },
+      "irrigation_active": {
+        "name": "Irrigazione in corso"
+      },
+      "pump_relay": {
+        "name": "Relè pompa"
+      }
     },
     "sensor": {
-      "tank_level": { "name": "Livello cisterna" },
-      "tank_liters": { "name": "Volume cisterna" },
-      "temperature": { "name": "Temperatura" },
-      "flow_in_rate": { "name": "Portata entrata" },
-      "flow_out_rate": { "name": "Portata uscita" },
-      "daily_consumption_in": { "name": "Ingresso oggi" },
-      "daily_consumption_out": { "name": "Uscita oggi" },
-      "zone_timer": { "name": "{zone_name} tempo rimanente" },
-      "signal_strength": { "name": "Intensità segnale" },
-      "uptime": { "name": "Tempo di attività" },
-      "firmware_version": { "name": "Versione firmware" },
-      "wifi_network": { "name": "Rete Wi-Fi" },
-      "ip_address": { "name": "Indirizzo IP" },
-      "pump_mode": { "name": "Modalità pompa" }
+      "tank_level": {
+        "name": "Livello cisterna"
+      },
+      "tank_liters": {
+        "name": "Volume cisterna"
+      },
+      "temperature": {
+        "name": "Temperatura"
+      },
+      "flow_in_rate": {
+        "name": "Portata entrata"
+      },
+      "flow_out_rate": {
+        "name": "Portata uscita"
+      },
+      "daily_consumption_in": {
+        "name": "Ingresso oggi"
+      },
+      "daily_consumption_out": {
+        "name": "Uscita oggi"
+      },
+      "zone_timer": {
+        "name": "{zone_name} tempo rimanente"
+      },
+      "signal_strength": {
+        "name": "Intensità segnale"
+      },
+      "uptime": {
+        "name": "Tempo di attività"
+      },
+      "firmware_version": {
+        "name": "Versione firmware"
+      },
+      "wifi_network": {
+        "name": "Rete Wi-Fi"
+      },
+      "ip_address": {
+        "name": "Indirizzo IP"
+      },
+      "pump_mode": {
+        "name": "Modalità pompa"
+      }
     },
     "switch": {
-      "valve": { "name": "Valvola {number}" },
-      "pump_enabled": { "name": "Pompa" }
+      "valve": {
+        "name": "Valvola {number}"
+      },
+      "pump_enabled": {
+        "name": "Pompa"
+      }
     }
   }
 }
