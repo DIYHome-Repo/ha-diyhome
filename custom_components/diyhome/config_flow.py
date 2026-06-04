@@ -294,8 +294,12 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             uid = uid_bytes.decode("utf-8", errors="replace")
                         else:
                             uid = str(uid_bytes)
-                        if uid in known_uids and info.server:
-                            return info.server.rstrip(".")
+                        if uid in known_uids:
+                            # Preferisce IP diretto su .local — in HA Docker/container
+                            # il resolver mDNS può non funzionare per .local
+                            addrs = info.parsed_addresses() or []
+                            ipv4 = next((a for a in addrs if ":" not in a), None)
+                            return ipv4 or (info.server.rstrip(".") if info.server else "")
                 except Exception:
                     continue
 
