@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.3.1 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.3.2 fix cloud SSE TCP dead-connection (sock_read=30)."""
 from __future__ import annotations
 
 import asyncio
@@ -620,7 +620,12 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 async with self._session.get(
                     stream_url,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=None, connect=15),
+                    # sock_read=30: se non arrivano dati (evento o keepalive ": ping")
+                    # entro 30s, la TCP è morta (NAT timeout, proxy idle close) →
+                    # TimeoutError → reconnect. Il server invia keepalive ogni 25s,
+                    # quindi in condizioni normali il timeout non scatta mai.
+                    # FIX P9-cloud: identico alla LAN SSE sock_read=25.
+                    timeout=aiohttp.ClientTimeout(total=None, connect=15, sock_read=30),
                 ) as resp:
                     if resp.status in (401, 403):
                         _LOGGER.debug("DiyHome cloud SSE: token scaduto (HTTP %s), tentativo refresh", resp.status)
@@ -715,8 +720,13 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 if self._stopping:
                     return
-                _LOGGER.debug("DiyHome cloud SSE: errore (%s), retry 5s", err)
-                await asyncio.sleep(5)
+                # TimeoutError = nessun dato in 30s (TCP morta, NAT timeout, proxy idle-close)
+                # Reconnect immediato: il server manderà subito un "connected" + stato attuale.
+                if isinstance(err, asyncio.TimeoutError):
+                    _LOGGER.debug("DiyHome cloud SSE: timeout 30s (TCP inattiva) — reconnect immediato")
+                else:
+                    _LOGGER.debug("DiyHome cloud SSE: errore (%s), retry 5s", err)
+                    await asyncio.sleep(5)
 
     # ── REST polling safety-net ───────────────────────────────────────────────
 
