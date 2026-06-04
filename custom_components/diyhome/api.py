@@ -1,7 +1,10 @@
 """DiyHome API clients — Cloud REST e LAN HTTP."""
 from __future__ import annotations
 
+import base64
+import json as _jwt_json
 import logging
+import time as _jwt_time
 import uuid
 
 import aiohttp
@@ -156,6 +159,39 @@ class DiyHomeLanClient:
 
     def is_available(self) -> bool:
         return bool(self.mdns_hostname)
+
+    # ── JWT helpers ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _jwt_expires_at(token: str) -> float:
+        """Estrae campo `exp` dal JWT senza verifica firma.
+
+        Ritorna timestamp Unix (float) oppure 0.0 su qualsiasi errore.
+        """
+        try:
+            parts = token.split(".")
+            if len(parts) < 2:
+                return 0.0
+            padding = 4 - len(parts[1]) % 4
+            b64 = parts[1] + ("=" * (padding % 4))
+            decoded = base64.urlsafe_b64decode(b64.encode())
+            return float(_jwt_json.loads(decoded).get("exp", 0))
+        except Exception:
+            return 0.0
+
+    def needs_renewal(self) -> bool:
+        """True se il JWT LAN manca o scade entro le prossime 24 ore.
+
+        Chiamato in `async_send_command` prima di ogni comando LAN per
+        rinnovare preventivamente il token — senza aspettare il 401 del
+        firmware che causerebbe il fallback cloud silenzioso.
+        """
+        if not self._lan_token:
+            return True
+        exp = self._jwt_expires_at(self._lan_token)
+        if exp <= 0:
+            return False  # token senza exp → non gestire (es. dev/test)
+        return (_jwt_time.time() + 86_400) >= exp  # rinnova se scade entro 24h
 
     async def get_ha_state(self) -> dict:
         """GET /api/v1/ha/state — snapshot normalizzato per HA."""
