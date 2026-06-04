@@ -555,8 +555,12 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                             else str(uid_bytes)
                         )
                         # Accetta se UID è nel nostro account, oppure se non abbiamo UIDs
-                        if (not known_uids or uid in known_uids) and info.server:
-                            return info.server.rstrip(".")
+                        if not known_uids or uid in known_uids:
+                            # Preferisce IP diretto su .local — in HA Docker/container
+                            # il resolver mDNS può non funzionare per nomi .local
+                            addrs = info.parsed_addresses() or []
+                            ipv4 = next((a for a in addrs if ":" not in a), None)
+                            return ipv4 or (info.server.rstrip(".") if info.server else "")
                 except Exception:
                     continue
 
