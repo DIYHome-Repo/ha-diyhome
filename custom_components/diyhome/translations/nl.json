@@ -36,38 +36,81 @@
   "options": {
     "step": {
       "init": {
-        "title": "DiyHome-opties",
-        "description": "Geen opties om handmatig te configureren. Het apparaat wordt automatisch ontdekt via mDNS."
+        "title": "DiyHome — LAN-instellingen",
+        "description": "Voer het IP-adres van het apparaat in voor directe LAN-besturing (sub-seconde latentie). Laat leeg voor alleen cloudmodus.",
+        "data": {
+          "mdns_hostname": "Apparaat-IP of hostnaam (bijv. 192.168.1.248)"
+        }
       }
     },
     "error": {}
   },
   "entity": {
     "binary_sensor": {
-      "online": { "name": "Online" },
-      "alarm": { "name": "Alarm" },
-      "irrigation_active": { "name": "Beregening actief" },
-      "pump_relay": { "name": "Pomprelais" }
+      "online": {
+        "name": "Online"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "irrigation_active": {
+        "name": "Beregening actief"
+      },
+      "pump_relay": {
+        "name": "Pomprelais"
+      }
     },
     "sensor": {
-      "tank_level": { "name": "Tankpeil" },
-      "tank_liters": { "name": "Tankvolume" },
-      "temperature": { "name": "Temperatuur" },
-      "flow_in_rate": { "name": "Instroomsnelheid" },
-      "flow_out_rate": { "name": "Uitstroomsnelheid" },
-      "daily_consumption_in": { "name": "Huidig verbruik in" },
-      "daily_consumption_out": { "name": "Huidig verbruik uit" },
-      "zone_timer": { "name": "{zone_name} resterende tijd" },
-      "signal_strength": { "name": "Signaalsterkte" },
-      "uptime": { "name": "Bedrijfstijd" },
-      "firmware_version": { "name": "Firmwareversie" },
-      "wifi_network": { "name": "Wi-Fi netwerk" },
-      "ip_address": { "name": "IP-adres" },
-      "pump_mode": { "name": "Pompstand" }
+      "tank_level": {
+        "name": "Tankpeil"
+      },
+      "tank_liters": {
+        "name": "Tankvolume"
+      },
+      "temperature": {
+        "name": "Temperatuur"
+      },
+      "flow_in_rate": {
+        "name": "Instroomsnelheid"
+      },
+      "flow_out_rate": {
+        "name": "Uitstroomsnelheid"
+      },
+      "daily_consumption_in": {
+        "name": "Huidig verbruik in"
+      },
+      "daily_consumption_out": {
+        "name": "Huidig verbruik uit"
+      },
+      "zone_timer": {
+        "name": "{zone_name} resterende tijd"
+      },
+      "signal_strength": {
+        "name": "Signaalsterkte"
+      },
+      "uptime": {
+        "name": "Bedrijfstijd"
+      },
+      "firmware_version": {
+        "name": "Firmwareversie"
+      },
+      "wifi_network": {
+        "name": "Wi-Fi netwerk"
+      },
+      "ip_address": {
+        "name": "IP-adres"
+      },
+      "pump_mode": {
+        "name": "Pompstand"
+      }
     },
     "switch": {
-      "valve": { "name": "Klep {number}" },
-      "pump_enabled": { "name": "Pomp" }
+      "valve": {
+        "name": "Klep {number}"
+      },
+      "pump_enabled": {
+        "name": "Pomp"
+      }
     }
   }
 }
