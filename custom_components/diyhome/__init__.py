@@ -682,43 +682,70 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
                             if line.startswith("data:") and current_event in _CLOUD_REALTIME_EVENTS:
                                 try:
-                                    # FIX P5 anti-stale: se un update LAN è avvenuto < 2s fa,
-                                    # l'evento cloud potrebbe portare stato precedente al comando
-                                    # (race: HA→LAN cmd → cloud SSE ritardato con stato vecchio).
-                                    age = time.monotonic() - self._lan_last_update
-                                    if self.lan_mode and age < 2.0:
-                                        _LOGGER.debug(
-                                            "DiyHome cloud SSE: evento '%s' scartato anti-stale (LAN update %0.1fs fa)",
-                                            current_event, age,
-                                        )
-                                        current_event = None
-                                        continue
                                     payload = json.loads(line[5:].strip())
                                     uid = payload.get("uid")
                                     if uid and self.data and uid in self.data:
                                         embedded = payload.get("state")
-                                        if embedded:
-                                            new_data = dict(self.data)
-                                            new_data[uid] = _norm_cloud_state(embedded)
-                                            self.async_set_updated_data(new_data)
-                                            _LOGGER.debug(
-                                                "DiyHome cloud SSE: evento '%s' uid=%s → HA aggiornato",
-                                                current_event, uid,
-                                            )
-                                        else:
-                                            _LOGGER.debug(
-                                                "DiyHome cloud SSE: evento '%s' uid=%s senza stato embedded → GET",
-                                                current_event, uid,
-                                            )
-                                            try:
-                                                state = await self.client.get_device_state(uid)
+                                        if self.lan_mode:
+                                            # FIX v2.3.4: in LAN mode l'anti-stale (age<2s) bloccava
+                                            # TUTTI gli eventi cloud app→HA quando il firmware manda
+                                            # LAN SSE periodicamente (sub-secondo) → _lan_last_update
+                                            # sempre recente → cloud SSE sempre scartata → latenza 10-30s.
+                                            #
+                                            # Nuovo comportamento: usa embedded state del cloud subito
+                                            # (fast-path ottimistico), poi conferma con LAN GET dopo
+                                            # 400ms (tempo al device di eseguire il comando MQTT).
+                                            if embedded:
                                                 new_data = dict(self.data)
-                                                new_data[uid] = _norm_cloud_state(state)
+                                                new_data[uid] = _norm_cloud_state(embedded)
                                                 self.async_set_updated_data(new_data)
-                                            except ConfigEntryAuthFailed:
-                                                return
-                                            except Exception:
-                                                await self.async_request_refresh()
+                                                _LOGGER.debug(
+                                                    "DiyHome cloud SSE LAN: evento '%s' uid=%s → aggiornato embedded, verifica LAN in 400ms",
+                                                    current_event, uid,
+                                                )
+                                            # Conferma asincrona con stato reale del device
+                                            async def _confirm_from_lan(uid: str = uid) -> None:
+                                                await asyncio.sleep(0.4)
+                                                try:
+                                                    full = await self.lan_client.get_ha_state()
+                                                    if full and self.data and uid in self.data:
+                                                        new_data = dict(self.data)
+                                                        new_data[uid] = _norm_lan_state({**full, "uid": uid})
+                                                        self._update_from_lan(new_data)
+                                                        _LOGGER.debug(
+                                                            "DiyHome cloud SSE LAN: conferma LAN uid=%s → ok",
+                                                            uid,
+                                                        )
+                                                except Exception as _e:
+                                                    _LOGGER.debug(
+                                                        "DiyHome cloud SSE LAN: conferma LAN uid=%s fallita: %s",
+                                                        uid, _e,
+                                                    )
+                                            self.hass.async_create_task(_confirm_from_lan())
+                                        else:
+                                            # Cloud mode: usa embedded state direttamente
+                                            if embedded:
+                                                new_data = dict(self.data)
+                                                new_data[uid] = _norm_cloud_state(embedded)
+                                                self.async_set_updated_data(new_data)
+                                                _LOGGER.debug(
+                                                    "DiyHome cloud SSE: evento '%s' uid=%s → HA aggiornato",
+                                                    current_event, uid,
+                                                )
+                                            else:
+                                                _LOGGER.debug(
+                                                    "DiyHome cloud SSE: evento '%s' uid=%s senza stato embedded → GET",
+                                                    current_event, uid,
+                                                )
+                                                try:
+                                                    state = await self.client.get_device_state(uid)
+                                                    new_data = dict(self.data)
+                                                    new_data[uid] = _norm_cloud_state(state)
+                                                    self.async_set_updated_data(new_data)
+                                                except ConfigEntryAuthFailed:
+                                                    return
+                                                except Exception:
+                                                    await self.async_request_refresh()
                                     else:
                                         _LOGGER.debug(
                                             "DiyHome cloud SSE: uid=%s non in self.data", uid
