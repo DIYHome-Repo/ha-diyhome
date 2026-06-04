@@ -36,38 +36,81 @@
   "options": {
     "step": {
       "init": {
-        "title": "DiyHome options",
-        "description": "No options to configure. The device is discovered automatically via mDNS."
+        "title": "DiyHome — LAN settings",
+        "description": "Set the device IP address to enable direct LAN control (sub-second latency). Leave empty to use cloud mode only.",
+        "data": {
+          "mdns_hostname": "Device IP or hostname (e.g. 192.168.1.248)"
+        }
       }
     },
     "error": {}
   },
   "entity": {
     "binary_sensor": {
-      "online": { "name": "Online" },
-      "alarm": { "name": "Alarm" },
-      "irrigation_active": { "name": "Irrigation running" },
-      "pump_relay": { "name": "Pump relay" }
+      "online": {
+        "name": "Online"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "irrigation_active": {
+        "name": "Irrigation running"
+      },
+      "pump_relay": {
+        "name": "Pump relay"
+      }
     },
     "sensor": {
-      "tank_level": { "name": "Tank level" },
-      "tank_liters": { "name": "Tank volume" },
-      "temperature": { "name": "Temperature" },
-      "flow_in_rate": { "name": "Inlet flow rate" },
-      "flow_out_rate": { "name": "Outlet flow rate" },
-      "daily_consumption_in": { "name": "Today's inlet" },
-      "daily_consumption_out": { "name": "Today's outlet" },
-      "zone_timer": { "name": "{zone_name} remaining time" },
-      "signal_strength": { "name": "Signal strength" },
-      "uptime": { "name": "Uptime" },
-      "firmware_version": { "name": "Firmware version" },
-      "wifi_network": { "name": "Wi-Fi network" },
-      "ip_address": { "name": "IP address" },
-      "pump_mode": { "name": "Pump mode" }
+      "tank_level": {
+        "name": "Tank level"
+      },
+      "tank_liters": {
+        "name": "Tank volume"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "flow_in_rate": {
+        "name": "Inlet flow rate"
+      },
+      "flow_out_rate": {
+        "name": "Outlet flow rate"
+      },
+      "daily_consumption_in": {
+        "name": "Today's inlet"
+      },
+      "daily_consumption_out": {
+        "name": "Today's outlet"
+      },
+      "zone_timer": {
+        "name": "{zone_name} remaining time"
+      },
+      "signal_strength": {
+        "name": "Signal strength"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "firmware_version": {
+        "name": "Firmware version"
+      },
+      "wifi_network": {
+        "name": "Wi-Fi network"
+      },
+      "ip_address": {
+        "name": "IP address"
+      },
+      "pump_mode": {
+        "name": "Pump mode"
+      }
     },
     "switch": {
-      "valve": { "name": "Valve {number}" },
-      "pump_enabled": { "name": "Pump" }
+      "valve": {
+        "name": "Valve {number}"
+      },
+      "pump_enabled": {
+        "name": "Pump"
+      }
     }
   }
 }
