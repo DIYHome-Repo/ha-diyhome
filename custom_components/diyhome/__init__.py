@@ -870,23 +870,45 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     # ── Comandi ───────────────────────────────────────────────────────────────
 
+    async def _confirm_lan_after_command(self, uid: str) -> None:
+        """Ricarica stato LAN 350ms dopo un comando riuscito.
+
+        FIX I6: il GET immediato (vecchio comportamento P8) restituiva lo stato
+        PRECEDENTE perché il firmware esegue i comandi in modo asincrono (task
+        FreeRTOS). Attendere 350ms garantisce che il device abbia già mutato
+        lo stato prima del GET di conferma.
+        _update_from_lan aggiorna anche il timestamp anti-stale (FIX P5).
+        """
+        await asyncio.sleep(0.35)
+        try:
+            states = await self.lan_client.get_all_states()
+            if states and self.data:
+                new_data = {**self.data, **states}
+                self._update_from_lan(new_data)
+                _LOGGER.debug("DiyHome: conferma LAN post-cmd uid=%s → ok", uid)
+        except Exception as err:
+            _LOGGER.debug("DiyHome: conferma LAN post-cmd uid=%s fallita: %s", uid, err)
+
     async def async_send_command(
         self, uid: str, action: str, payload: dict | None = None
     ) -> bool:
         """Invia comando: LAN diretta se disponibile, cloud altrimenti."""
         if self.lan_mode and self.lan_client.is_available():
+            # FIX C3: rinnova il JWT LAN se manca o scade entro 24h.
+            # Senza questo, dopo 30gg il token scadeva → send_command restituiva
+            # False silenziosamente → fallback cloud senza avvisare l'utente.
+            if self.lan_client.needs_renewal():
+                _LOGGER.debug("DiyHome: JWT LAN in scadenza/assente → rinnovo per uid=%s", uid)
+                await self._fetch_lan_jwt(uid)
             try:
                 ok = await self.lan_client.send_command(action, payload or {})
                 if ok:
-                    # P8: dopo comando LAN riuscito, aggiorna subito stato HA da LAN.
-                    # _update_from_lan registra anche il timestamp anti-stale (FIX P5)
-                    # così la cloud SSE ignora l'eventuale echo ritardato con stato vecchio.
-                    try:
-                        states = await self.lan_client.get_all_states()
-                        if states:
-                            self._update_from_lan(states)
-                    except Exception:
-                        pass
+                    # FIX I6: GET di conferma asincrono con delay 350ms
+                    # (il firmware esegue comandi async — GET immediato dava stato vecchio)
+                    self.hass.async_create_task(
+                        self._confirm_lan_after_command(uid),
+                        name=f"diyhome_confirm_lan_{uid}",
+                    )
                     return True
                 _LOGGER.debug("DiyHome LAN command fallito, fallback cloud")
             except Exception as err:
