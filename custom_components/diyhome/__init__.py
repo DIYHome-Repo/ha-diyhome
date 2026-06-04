@@ -462,11 +462,29 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
     # ── LAN retry loop ────────────────────────────────────────────────────────
 
+    def _extract_ip_from_cloud_data(self) -> str:
+        """Estrae l'IP del device dai dati cloud (diagnostics.ip_address).
+
+        Usato come fallback quando zeroconf non è disponibile (HA in Docker/container).
+        Il cloud popola questo campo dal shadow/reported del device (network_configs).
+        """
+        if not self.data:
+            return ""
+        for device in self.data.values():
+            if not isinstance(device, dict):
+                continue
+            diag = device.get("diagnostics") or {}
+            ip = diag.get("ip_address") or ""
+            if ip and ip not in ("0.0.0.0", ""):
+                _LOGGER.info("DiyHome: IP estratto dai dati cloud → %s", ip)
+                return ip
+        return ""
+
     async def _lan_retry_loop(self) -> None:
         """Riprova connessione LAN ogni LAN_RETRY_INTERVAL secondi (in cloud mode).
 
         Se mdns_hostname è vuoto (setup senza IP, zeroconf non trovato al boot),
-        prova a scoprire il device via zeroconf prima di ogni probe.
+        prova prima zeroconf, poi estrae l'IP dai dati cloud come fallback.
         Quando trovato: aggiorna entry.data per persistere tra riavvii HA.
         """
         while not self._stopping and not self.lan_mode:
@@ -477,6 +495,10 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             # Se non abbiamo ancora un hostname, proviamo a scoprire il device
             if not self.lan_client.mdns_hostname:
                 discovered = await self._zeroconf_discover_hostname()
+                # Fallback: IP dai dati cloud (funziona anche in Docker/container
+                # dove zeroconf non risolve .local)
+                if not discovered:
+                    discovered = self._extract_ip_from_cloud_data()
                 if discovered:
                     _LOGGER.info(
                         "DiyHome: device scoperto via zeroconf (background) → %s — switch a LAN mode",
@@ -934,6 +956,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise
         except Exception as err:
             raise ConfigEntryNotReady(f"DiyHome non raggiungibile: {err}") from err
+
+    # Auto-detect IP dai dati cloud se mdns_hostname non configurato manualmente
+    # (funziona anche in HA Docker/container dove zeroconf non risolve .local)
+    if not mdns_hostname and coordinator.data:
+        cloud_ip = coordinator._extract_ip_from_cloud_data()
+        if cloud_ip:
+            _LOGGER.info(
+                "DiyHome: IP auto-rilevato dai dati cloud → %s — tentativo LAN mode",
+                cloud_ip,
+            )
+            mdns_hostname = cloud_ip
+            lan_client.mdns_hostname = cloud_ip
+            if coordinator._session is None or coordinator._session.closed:
+                coordinator._session = aiohttp.ClientSession()
+            lan_client.session = coordinator._session
+            # Salva in entry.data per sopravvivere a riavvii HA
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, CONF_MDNS_HOSTNAME: cloud_ip},
+            )
+            # Prima fetch LAN con IP cloud
+            try:
+                states = await asyncio.wait_for(
+                    lan_client.get_all_states(), timeout=LAN_CONNECT_TIMEOUT
+                )
+                if states:
+                    coordinator.async_set_updated_data(states)
+                    coordinator.lan_mode = True
+                    _LOGGER.info(
+                        "DiyHome: LAN mode attiva via IP cloud (%s)", cloud_ip
+                    )
+            except Exception:
+                pass
 
     runtime_data = DiyHomeRuntimeData(coordinator=coordinator, client=client)
     entry.runtime_data = runtime_data
