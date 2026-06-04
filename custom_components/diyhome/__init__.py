@@ -1,10 +1,9 @@
-"""DiyHome integration for Home Assistant — v2.3.0 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
+"""DiyHome integration for Home Assistant — v2.3.1 LAN-first (HTTP SSE + REST) + Cloud SSE sempre attiva."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -463,18 +462,107 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     # ── LAN retry loop ────────────────────────────────────────────────────────
 
     async def _lan_retry_loop(self) -> None:
-        """Riprova connessione LAN ogni LAN_RETRY_INTERVAL secondi (in cloud mode)."""
-        fail_count = 0
+        """Riprova connessione LAN ogni LAN_RETRY_INTERVAL secondi (in cloud mode).
+
+        Se mdns_hostname è vuoto (setup senza IP, zeroconf non trovato al boot),
+        prova a scoprire il device via zeroconf prima di ogni probe.
+        Quando trovato: aggiorna entry.data per persistere tra riavvii HA.
+        """
         while not self._stopping and not self.lan_mode:
             await asyncio.sleep(LAN_RETRY_INTERVAL)
             if self._stopping or self.lan_mode:
                 return
+
+            # Se non abbiamo ancora un hostname, proviamo a scoprire il device
+            if not self.lan_client.mdns_hostname:
+                discovered = await self._zeroconf_discover_hostname()
+                if discovered:
+                    _LOGGER.info(
+                        "DiyHome: device scoperto via zeroconf (background) → %s — switch a LAN mode",
+                        discovered,
+                    )
+                    self.lan_client.mdns_hostname = discovered
+                    # Persisti in entry.data per sopravvivere a riavvii HA
+                    self.hass.config_entries.async_update_entry(
+                        self._entry,
+                        data={**self._entry.data, CONF_MDNS_HOSTNAME: discovered},
+                    )
+                    # Crea sessione HTTP se non ancora esistente
+                    if self._session is None or self._session.closed:
+                        self._session = aiohttp.ClientSession()
+                        self.lan_client.session = self._session
+
             _LOGGER.debug("DiyHome: retry probe LAN (%s)", self.lan_client.mdns_hostname)
             if await self._probe_lan():
                 _LOGGER.info("DiyHome: LAN tornata disponibile, switch a LAN mode")
                 await self._activate_lan_mode()
                 return
-            fail_count += 1
+
+    async def _zeroconf_discover_hostname(self) -> str:
+        """Scan zeroconf per _diyhome._tcp.local. (max 5s) in background.
+
+        Abbina il device per UID TXT record con i device del coordinator.
+        Se coordinator.data è vuoto (raro), accetta il primo device DiyHome trovato.
+        Ritorna hostname .local se trovato, "" altrimenti. Graceful su qualsiasi errore.
+        """
+        known_uids: set[str] = set(self.data.keys()) if self.data else set()
+
+        try:
+            from homeassistant.components.zeroconf import async_get_async_instance
+            from zeroconf import ServiceStateChange
+            from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+
+            aiozc = await async_get_async_instance(self.hass)
+            found_names: list[str] = []
+            evt = asyncio.Event()
+
+            def _handler(
+                zeroconf_instance,
+                service_type: str,
+                name: str,
+                state_change: ServiceStateChange,
+            ) -> None:
+                if state_change in (
+                    ServiceStateChange.Added,
+                    ServiceStateChange.Updated,
+                ):
+                    if name not in found_names:
+                        found_names.append(name)
+                    evt.set()
+
+            browser = AsyncServiceBrowser(
+                aiozc.zeroconf,
+                "_diyhome._tcp.local.",
+                handlers=[_handler],
+            )
+            try:
+                await asyncio.wait_for(evt.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                browser.cancel()
+
+            for name in found_names:
+                info = AsyncServiceInfo("_diyhome._tcp.local.", name)
+                try:
+                    if await info.async_request(aiozc.zeroconf, 3000):
+                        props = info.properties or {}
+                        uid_bytes = props.get(b"uid") or props.get("uid", b"")
+                        uid = (
+                            uid_bytes.decode("utf-8", errors="replace")
+                            if isinstance(uid_bytes, bytes)
+                            else str(uid_bytes)
+                        )
+                        # Accetta se UID è nel nostro account, oppure se non abbiamo UIDs
+                        if (not known_uids or uid in known_uids) and info.server:
+                            return info.server.rstrip(".")
+                except Exception:
+                    continue
+
+        except Exception as err:
+            _LOGGER.debug("DiyHome: zeroconf background scan: %s", err)
+
+        return ""
 
     # ── Token refresh ─────────────────────────────────────────────────────────
 
