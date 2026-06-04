@@ -316,8 +316,9 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 name=f"diyhome_cloud_sse_{self._entry.entry_id}",
             )
 
-        # Retry LAN periodico
-        if self.lan_client.is_available() and (not self._lan_retry_task or self._lan_retry_task.done()):
+        # Retry LAN periodico — parte SEMPRE in cloud mode (anche se hostname vuoto:
+        # _lan_retry_loop usa zeroconf per scoprire il device automaticamente)
+        if not self._lan_retry_task or self._lan_retry_task.done():
             self._lan_retry_task = self.hass.async_create_task(
                 self._lan_retry_loop(),
                 name=f"diyhome_lan_retry_{self._entry.entry_id}",
