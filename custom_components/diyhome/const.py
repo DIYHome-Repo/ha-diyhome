@@ -12,5 +12,9 @@ CONF_MDNS_HOSTNAME = "mdns_hostname"  # es. "DIYHome_WT1_AABBCC" → .local riso
 # Intervalli
 LAN_SCAN_INTERVAL   = 10   # secondi watchdog HTTP LAN
 CLOUD_SCAN_INTERVAL = 30   # secondi polling REST cloud (emergenza)
-LAN_CONNECT_TIMEOUT = 3    # secondi timeout probe LAN
-LAN_RETRY_INTERVAL  = 60   # secondi tra retry discovery LAN quando in cloud mode
+# FIX L3 (Bug C): timeout probe alzato da 3s a 5s.
+# Su HA installato come Docker container, la risoluzione mDNS di ".local" hostname
+# passa dal proxy mDNS di HA e può richiedere 3-4s in condizioni normali.
+# Con 3s il probe poteva fallire anche con device perfettamente raggiungibile.
+LAN_CONNECT_TIMEOUT = 5    # secondi timeout probe LAN (era 3 — troppo corto su Docker)
+LAN_RETRY_INTERVAL  = 60   # secondi tra retry LAN (dopo il primo a 5s — vedi _lan_retry_loop)
