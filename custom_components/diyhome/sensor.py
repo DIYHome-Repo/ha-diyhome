@@ -319,64 +319,6 @@ DIAGNOSTIC_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
             and d.get("tank", {}).get("distance_cm") is not None
         ),
     ),
-    DiyHomeSensorDescription(
-        key="cpu_temp",
-        translation_key="cpu_temp",
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:chip",
-        value_fn=lambda d: d.get("diagnostics", {}).get("cpu_temp"),
-        available_fn=lambda d: d.get("diagnostics", {}).get("cpu_temp") is not None,
-    ),
-    DiyHomeSensorDescription(
-        key="free_heap",
-        translation_key="free_heap",
-        native_unit_of_measurement="B",
-        device_class=None,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:memory",
-        value_fn=lambda d: d.get("diagnostics", {}).get("free_heap"),
-        available_fn=lambda d: d.get("diagnostics", {}).get("free_heap") is not None,
-    ),
-    DiyHomeSensorDescription(
-        key="daily_avg",
-        translation_key="daily_avg",
-        native_unit_of_measurement=UnitOfVolume.LITERS,
-        device_class=SensorDeviceClass.VOLUME,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:chart-bar",
-        value_fn=lambda d: (
-            d.get("consumption_monthly", {}).get("daily_avg")
-            if d.get("consumption_monthly") else None
-        ),
-        available_fn=lambda d: d.get("online", False) and d.get("consumption_monthly") is not None,
-    ),
-    DiyHomeSensorDescription(
-        key="valve1_type",
-        translation_key="valve1_type",
-        native_unit_of_measurement=None,
-        device_class=None,
-        state_class=None,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:valve-closed",
-        value_fn=lambda d: d.get("valve1", {}).get("type") if d.get("valve1") else None,
-        available_fn=lambda d: d.get("valve1") is not None,
-    ),
-    DiyHomeSensorDescription(
-        key="valve2_type",
-        translation_key="valve2_type",
-        native_unit_of_measurement=None,
-        device_class=None,
-        state_class=None,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:valve-closed",
-        value_fn=lambda d: d.get("valve2", {}).get("type") if d.get("valve2") else None,
-        available_fn=lambda d: d.get("valve2") is not None,
-    ),
 )
 
 
@@ -480,7 +422,7 @@ class DiyHomeTempSensor(DiyHomeEntity, SensorEntity):
         return (
             super().available
             and self._device_data.get("online", False)
-            and self._get_sensor().get("temp_c") is not None
+            and bool(self._get_sensor())
         )
 
 
