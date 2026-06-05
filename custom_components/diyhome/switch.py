@@ -82,6 +82,18 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         self._optimistic_is_on = None
         super()._handle_coordinator_update()
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        valve_data = self._device_data.get(f"valve{self._valve}") or {}
+        attrs: dict = {}
+        if valve_data.get("type") is not None:
+            attrs["valve_type"] = valve_data["type"]
+        if valve_data.get("protection_enabled") is not None:
+            attrs["protection_enabled"] = valve_data["protection_enabled"]
+        if valve_data.get("protection_time") is not None:
+            attrs["protection_time"] = valve_data["protection_time"]
+        return attrs
+
     async def async_turn_on(self, **kwargs) -> None:
         self._optimistic_is_on = True
         self.async_write_ha_state()
