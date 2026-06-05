@@ -13,6 +13,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import DiyHomeApiClient, DiyHomeLanClient
@@ -1067,6 +1068,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     runtime_data = DiyHomeRuntimeData(coordinator=coordinator, client=client)
     entry.runtime_data = runtime_data
+
+    # Migrazione v2.5.0: rimuovi entità obsolete dal registry HA.
+    # HA non cancella automaticamente le entità eliminate dal componente —
+    # restano come "Non disponibile" finché non vengono esplicitamente rimosse.
+    _OBSOLETE_ENTITY_KEYS: list[tuple[str, str]] = [
+        ("sensor", "cpu_temp"),
+        ("sensor", "free_heap"),
+        ("sensor", "daily_avg"),
+        ("sensor", "valve1_type"),
+        ("sensor", "valve2_type"),
+    ]
+    ent_reg = er.async_get(hass)
+    for uid in list(coordinator.data or {}):
+        for platform, key in _OBSOLETE_ENTITY_KEYS:
+            unique_id = f"{uid}_{key}"
+            entity_id = ent_reg.async_get_entity_id(platform, "diyhome", unique_id)
+            if entity_id:
+                ent_reg.async_remove(entity_id)
+                _LOGGER.info("DiyHome [migrazione v2.5.0]: rimossa entità obsoleta %s (%s)", entity_id, unique_id)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
