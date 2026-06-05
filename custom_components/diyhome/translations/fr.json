@@ -58,6 +58,15 @@
       },
       "pump_relay": {
         "name": "Relais de la pompe"
+      },
+      "leak_detected": {
+        "name": "Fuite détectée"
+      },
+      "valve1_protection": {
+        "name": "Protection vanne 1"
+      },
+      "valve2_protection": {
+        "name": "Protection vanne 2"
       }
     },
     "sensor": {
@@ -66,6 +75,9 @@
       },
       "tank_liters": {
         "name": "Volume du réservoir"
+      },
+      "tank_volume_m3": {
+        "name": "Volume du réservoir (m³)"
       },
       "temperature": {
         "name": "Température"
@@ -76,11 +88,32 @@
       "flow_out_rate": {
         "name": "Débit sortant"
       },
+      "flow_in_total": {
+        "name": "Volume total entrant"
+      },
+      "flow_out_total": {
+        "name": "Volume total sortant"
+      },
       "daily_consumption_in": {
         "name": "Entrée aujourd'hui"
       },
       "daily_consumption_out": {
         "name": "Sortie aujourd'hui"
+      },
+      "monthly_consumption_in": {
+        "name": "Entrée mensuelle"
+      },
+      "monthly_consumption_out": {
+        "name": "Sortie mensuelle"
+      },
+      "monthly_consumption_total": {
+        "name": "Total mensuel"
+      },
+      "forecast_month_l": {
+        "name": "Prévision du mois"
+      },
+      "forecast_cost_month": {
+        "name": "Coût mensuel estimé"
       },
       "zone_timer": {
         "name": "{zone_name} temps restant"
@@ -102,6 +135,9 @@
       },
       "pump_mode": {
         "name": "Mode de la pompe"
+      },
+      "tank_distance": {
+        "name": "Distance capteur réservoir"
       }
     },
     "switch": {
