@@ -58,6 +58,15 @@
       },
       "pump_relay": {
         "name": "Pomprelais"
+      },
+      "leak_detected": {
+        "name": "Lek gedetecteerd"
+      },
+      "valve1_protection": {
+        "name": "Klepbeveiliging 1"
+      },
+      "valve2_protection": {
+        "name": "Klepbeveiliging 2"
       }
     },
     "sensor": {
@@ -66,6 +75,9 @@
       },
       "tank_liters": {
         "name": "Tankvolume"
+      },
+      "tank_volume_m3": {
+        "name": "Tankvolume (m³)"
       },
       "temperature": {
         "name": "Temperatuur"
@@ -76,11 +88,32 @@
       "flow_out_rate": {
         "name": "Uitstroomsnelheid"
       },
+      "flow_in_total": {
+        "name": "Totaal instroomvolume"
+      },
+      "flow_out_total": {
+        "name": "Totaal uitstroomvolume"
+      },
       "daily_consumption_in": {
         "name": "Huidig verbruik in"
       },
       "daily_consumption_out": {
         "name": "Huidig verbruik uit"
+      },
+      "monthly_consumption_in": {
+        "name": "Maandelijks verbruik in"
+      },
+      "monthly_consumption_out": {
+        "name": "Maandelijks verbruik uit"
+      },
+      "monthly_consumption_total": {
+        "name": "Maandelijks totaal"
+      },
+      "forecast_month_l": {
+        "name": "Maandprognose"
+      },
+      "forecast_cost_month": {
+        "name": "Geschatte maandkosten"
       },
       "zone_timer": {
         "name": "{zone_name} resterende tijd"
@@ -102,6 +135,9 @@
       },
       "pump_mode": {
         "name": "Pompstand"
+      },
+      "tank_distance": {
+        "name": "Tankafstand sensor"
       }
     },
     "switch": {
