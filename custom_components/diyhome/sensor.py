@@ -16,6 +16,7 @@ from homeassistant.const import (
     EntityCategory,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    UnitOfLength,
     UnitOfTemperature,
     UnitOfTime,
     UnitOfVolume,
@@ -55,10 +56,24 @@ MAIN_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         translation_key="tank_liters",
         native_unit_of_measurement=UnitOfVolume.LITERS,
         device_class=SensorDeviceClass.VOLUME,
-        state_class=SensorStateClass.TOTAL,  # livello istantaneo (sale e scende): TOTAL, non MEASUREMENT
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:water",
         value_fn=lambda d: d.get("tank", {}).get("liters") if d.get("tank") else None,
         available_fn=lambda d: d.get("online", False) and d.get("tank") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="tank_volume_m3",
+        translation_key="tank_volume_m3",
+        native_unit_of_measurement=UnitOfVolume.CUBIC_METERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:water",
+        value_fn=lambda d: d.get("tank", {}).get("m3") if d.get("tank") else None,
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("tank") is not None
+            and d.get("tank", {}).get("m3") is not None
+        ),
     ),
     DiyHomeSensorDescription(
         key="temperature",
@@ -95,6 +110,34 @@ MAIN_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         available_fn=lambda d: d.get("online", False) and d.get("flow") is not None,
     ),
     DiyHomeSensorDescription(
+        key="flow_in_total",
+        translation_key="flow_in_total",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+        value_fn=lambda d: d.get("flow", {}).get("flow_in_total") if d.get("flow") else None,
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("flow") is not None
+            and d.get("flow", {}).get("flow_in_total") is not None
+        ),
+    ),
+    DiyHomeSensorDescription(
+        key="flow_out_total",
+        translation_key="flow_out_total",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+        value_fn=lambda d: d.get("flow", {}).get("flow_out_total") if d.get("flow") else None,
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("flow") is not None
+            and d.get("flow", {}).get("flow_out_total") is not None
+        ),
+    ),
+    DiyHomeSensorDescription(
         key="daily_consumption_in",
         translation_key="daily_consumption_in",
         native_unit_of_measurement=UnitOfVolume.LITERS,
@@ -126,6 +169,69 @@ MAIN_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
             d.get("online", False)
             and d.get("consumption_today") is not None
             and d.get("consumption_today", {}).get("liters_out") is not None
+        ),
+    ),
+    DiyHomeSensorDescription(
+        key="monthly_consumption_in",
+        translation_key="monthly_consumption_in",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:water-plus",
+        value_fn=lambda d: (
+            d.get("consumption_monthly", {}).get("liters_in")
+            if d.get("consumption_monthly") else None
+        ),
+        available_fn=lambda d: d.get("online", False) and d.get("consumption_monthly") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="monthly_consumption_out",
+        translation_key="monthly_consumption_out",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:water-minus",
+        value_fn=lambda d: (
+            d.get("consumption_monthly", {}).get("liters_out")
+            if d.get("consumption_monthly") else None
+        ),
+        available_fn=lambda d: d.get("online", False) and d.get("consumption_monthly") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="monthly_consumption_total",
+        translation_key="monthly_consumption_total",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:water",
+        value_fn=lambda d: (
+            d.get("consumption_monthly", {}).get("liters_total")
+            if d.get("consumption_monthly") else None
+        ),
+        available_fn=lambda d: d.get("online", False) and d.get("consumption_monthly") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="forecast_month_l",
+        translation_key="forecast_month_l",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:chart-timeline-variant",
+        value_fn=lambda d: d.get("forecast", {}).get("month_l") if d.get("forecast") else None,
+        available_fn=lambda d: d.get("online", False) and d.get("forecast") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="forecast_cost_month",
+        translation_key="forecast_cost_month",
+        native_unit_of_measurement="EUR",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:cash",
+        value_fn=lambda d: d.get("forecast", {}).get("cost_month") if d.get("forecast") else None,
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("forecast") is not None
+            and d.get("forecast", {}).get("cost_month") is not None
         ),
     ),
 )
@@ -197,6 +303,79 @@ DIAGNOSTIC_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
         icon="mdi:pump",
         value_fn=lambda d: d.get("pump", {}).get("mode") if d.get("pump") else None,
         available_fn=lambda d: d.get("pump") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="tank_distance",
+        translation_key="tank_distance",
+        native_unit_of_measurement=UnitOfLength.CENTIMETERS,
+        device_class=SensorDeviceClass.DISTANCE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:ruler",
+        value_fn=lambda d: d.get("tank", {}).get("distance_cm") if d.get("tank") else None,
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("tank") is not None
+            and d.get("tank", {}).get("distance_cm") is not None
+        ),
+    ),
+    DiyHomeSensorDescription(
+        key="cpu_temp",
+        translation_key="cpu_temp",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:chip",
+        value_fn=lambda d: d.get("diagnostics", {}).get("cpu_temp"),
+        available_fn=lambda d: d.get("diagnostics", {}).get("cpu_temp") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="free_heap",
+        translation_key="free_heap",
+        native_unit_of_measurement="B",
+        device_class=None,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:memory",
+        value_fn=lambda d: d.get("diagnostics", {}).get("free_heap"),
+        available_fn=lambda d: d.get("diagnostics", {}).get("free_heap") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="daily_avg",
+        translation_key="daily_avg",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:chart-bar",
+        value_fn=lambda d: (
+            d.get("consumption_monthly", {}).get("daily_avg")
+            if d.get("consumption_monthly") else None
+        ),
+        available_fn=lambda d: d.get("online", False) and d.get("consumption_monthly") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="valve1_type",
+        translation_key="valve1_type",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:valve-closed",
+        value_fn=lambda d: d.get("valve1", {}).get("type") if d.get("valve1") else None,
+        available_fn=lambda d: d.get("valve1") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="valve2_type",
+        translation_key="valve2_type",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:valve-closed",
+        value_fn=lambda d: d.get("valve2", {}).get("type") if d.get("valve2") else None,
+        available_fn=lambda d: d.get("valve2") is not None,
     ),
 )
 
