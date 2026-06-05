@@ -78,12 +78,7 @@
       "wifi_network":            { "name": "Wi-Fi network" },
       "ip_address":              { "name": "IP address" },
       "pump_mode":               { "name": "Pump mode" },
-      "tank_distance":           { "name": "Tank sensor distance" },
-      "cpu_temp":                { "name": "CPU temperature" },
-      "free_heap":               { "name": "Free heap memory" },
-      "daily_avg":               { "name": "Daily average consumption" },
-      "valve1_type":             { "name": "Valve 1 type" },
-      "valve2_type":             { "name": "Valve 2 type" }
+      "tank_distance":           { "name": "Tank sensor distance" }
     },
     "switch": {
       "valve":        { "name": "Valve {number}" },
