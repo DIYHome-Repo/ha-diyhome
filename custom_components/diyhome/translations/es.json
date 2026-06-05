@@ -58,6 +58,15 @@
       },
       "pump_relay": {
         "name": "Relé de la bomba"
+      },
+      "leak_detected": {
+        "name": "Fuga detectada"
+      },
+      "valve1_protection": {
+        "name": "Protección válvula 1"
+      },
+      "valve2_protection": {
+        "name": "Protección válvula 2"
       }
     },
     "sensor": {
@@ -66,6 +75,9 @@
       },
       "tank_liters": {
         "name": "Volumen del depósito"
+      },
+      "tank_volume_m3": {
+        "name": "Volumen del depósito (m³)"
       },
       "temperature": {
         "name": "Temperatura"
@@ -76,11 +88,32 @@
       "flow_out_rate": {
         "name": "Caudal de salida"
       },
+      "flow_in_total": {
+        "name": "Volumen total entrada"
+      },
+      "flow_out_total": {
+        "name": "Volumen total salida"
+      },
       "daily_consumption_in": {
         "name": "Entrada hoy"
       },
       "daily_consumption_out": {
         "name": "Salida hoy"
+      },
+      "monthly_consumption_in": {
+        "name": "Entrada mensual"
+      },
+      "monthly_consumption_out": {
+        "name": "Salida mensual"
+      },
+      "monthly_consumption_total": {
+        "name": "Total mensual"
+      },
+      "forecast_month_l": {
+        "name": "Previsión del mes"
+      },
+      "forecast_cost_month": {
+        "name": "Coste mensual estimado"
       },
       "zone_timer": {
         "name": "{zone_name} tiempo restante"
@@ -102,6 +135,9 @@
       },
       "pump_mode": {
         "name": "Modo de la bomba"
+      },
+      "tank_distance": {
+        "name": "Distancia del sensor"
       }
     },
     "switch": {
