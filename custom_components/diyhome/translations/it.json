@@ -58,6 +58,15 @@
       },
       "pump_relay": {
         "name": "Relè pompa"
+      },
+      "leak_detected": {
+        "name": "Perdita rilevata"
+      },
+      "valve1_protection": {
+        "name": "Protezione valvola 1"
+      },
+      "valve2_protection": {
+        "name": "Protezione valvola 2"
       }
     },
     "sensor": {
@@ -66,6 +75,9 @@
       },
       "tank_liters": {
         "name": "Volume cisterna"
+      },
+      "tank_volume_m3": {
+        "name": "Volume cisterna (m³)"
       },
       "temperature": {
         "name": "Temperatura"
@@ -76,11 +88,32 @@
       "flow_out_rate": {
         "name": "Portata uscita"
       },
+      "flow_in_total": {
+        "name": "Volume totale entrata"
+      },
+      "flow_out_total": {
+        "name": "Volume totale uscita"
+      },
       "daily_consumption_in": {
         "name": "Ingresso oggi"
       },
       "daily_consumption_out": {
         "name": "Uscita oggi"
+      },
+      "monthly_consumption_in": {
+        "name": "Entrata mese"
+      },
+      "monthly_consumption_out": {
+        "name": "Uscita mese"
+      },
+      "monthly_consumption_total": {
+        "name": "Totale mese"
+      },
+      "forecast_month_l": {
+        "name": "Proiezione mese"
+      },
+      "forecast_cost_month": {
+        "name": "Costo mensile previsto"
       },
       "zone_timer": {
         "name": "{zone_name} tempo rimanente"
@@ -102,6 +135,9 @@
       },
       "pump_mode": {
         "name": "Modalità pompa"
+      },
+      "tank_distance": {
+        "name": "Distanza sensore cisterna"
       }
     },
     "switch": {
