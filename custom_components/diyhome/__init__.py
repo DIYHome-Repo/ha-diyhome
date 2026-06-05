@@ -1,4 +1,4 @@
-"""DiyHome integration for Home Assistant — v2.3.2 fix cloud SSE TCP dead-connection (sock_read=30)."""
+"""DiyHome integration for Home Assistant — v2.4.0 entità estese: m³, total flow, monthly, forecast, leak, valve protection, alarms, cpu/heap diag."""
 from __future__ import annotations
 
 import asyncio
@@ -71,21 +71,36 @@ def _norm_tank(payload: dict) -> dict:
         temp = _first_not_none(ds18b20, "tempC")
     if temp is None:
         temp = _first_not_none(payload, "temperature", "temp", "ambientTemp", "tempC")
+    liters = _first_not_none(payload, "liters", "litri", "volume")
+    m3_val = _first_not_none(payload, "m3")
+    if m3_val is None and liters is not None:
+        try:
+            m3_val = round(float(liters) / 1000, 4)
+        except (TypeError, ValueError):
+            pass
     return {
         "level_pct":   _first_not_none(payload, "level_pct", "perc", "percentage", "level"),
-        "liters":      _first_not_none(payload, "liters", "litri", "volume"),
+        "liters":      liters,
+        "m3":          m3_val,
         "temperature": temp,
+        "distance_cm": _first_not_none(payload, "distance_cm", "distanceCm", "dist_cm"),
     }
 
 
 def _norm_flow(payload: dict) -> dict:
     """Normalizza payload flow da qualsiasi sorgente → device['flow']."""
     return {
-        "flow_in_rate":  _first_not_none(
+        "flow_in_rate":   _first_not_none(
             payload, "flow_in_rate", "flowInRate_L_min", "in", "flowIn"
         ),
-        "flow_out_rate": _first_not_none(
+        "flow_out_rate":  _first_not_none(
             payload, "flow_out_rate", "flowOutRate_L_min", "out", "flowOut"
+        ),
+        "flow_in_total":  _first_not_none(
+            payload, "flow_in_total", "flowInTotal", "totalIn"
+        ),
+        "flow_out_total": _first_not_none(
+            payload, "flow_out_total", "flowOutTotal", "totalOut"
         ),
     }
 
@@ -102,7 +117,8 @@ def _norm_diagnostics(existing: dict, payload: dict) -> dict:
         "ip_address": _first_not_none(payload, "ip_address", "ip")
                       or _first_not_none(wifi, "ip"),
         "uptime":     _first_not_none(payload, "uptime", "uptime_s"),
-        "heap_free":  _first_not_none(payload, "heap_free"),
+        "free_heap":  _first_not_none(payload, "free_heap", "freeHeap", "heap_free"),
+        "cpu_temp":   _first_not_none(payload, "cpu_temp", "cpuTemp", "cpu_temperature"),
     }
     diag.update({k: v for k, v in updates.items() if v is not None})
     return diag
@@ -134,6 +150,17 @@ def _norm_lan_state(raw: dict) -> dict:
     alarms = device.get("alarms", {})
     if isinstance(alarms, dict):
         device["alarm_active"] = bool(alarms.get("any", False))
+        device.setdefault("leak_active", device["alarm_active"])
+    # normalization m3 e distance_cm per tank (se firmware non li espone già)
+    tank = device.get("tank")
+    if isinstance(tank, dict):
+        tank = dict(tank)
+        if tank.get("m3") is None and tank.get("liters") is not None:
+            try:
+                tank["m3"] = round(float(tank["liters"]) / 1000, 4)
+            except (TypeError, ValueError):
+                pass
+        device["tank"] = tank
 
     # online: sempre True se riceviamo risposta LAN
     device["online"] = True
@@ -144,9 +171,16 @@ def _norm_lan_state(raw: dict) -> dict:
 def _norm_cloud_state(raw: dict) -> dict:
     """Normalizza risposta cloud GET /api/ha/devices/{uid}/state → struttura coordinator."""
     device = dict(raw)
-    alarms = device.get("alarms", {})
+    alarms = device.get("alarms")
     if isinstance(alarms, dict):
+        # compatibilità formato vecchio: {any, low, high}
         device["alarm_active"] = bool(alarms.get("any", False))
+        device.setdefault("leak_active", device["alarm_active"])
+    elif isinstance(alarms, list):
+        # nuovo formato REST: [{id, type, threshold, enabled, active}, ...]
+        if "alarm_active" not in device:
+            device["alarm_active"] = any(a.get("active", False) for a in alarms)
+        device.setdefault("leak_active", device.get("alarm_active", False))
     return device
 
 
