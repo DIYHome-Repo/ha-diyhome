@@ -32,9 +32,18 @@ async def async_setup_entry(
     for uid, device in coordinator.data.items():
         entities.append(DiyHomeOnlineSensor(coordinator, uid))
         entities.append(DiyHomeAlarmSensor(coordinator, uid))
+        entities.append(DiyHomeLeakSensor(coordinator, uid))
         entities.append(DiyHomeIrrigationActiveSensor(coordinator, uid))
         if device.get("pump") is not None:
             entities.append(DiyHomePumpRelaySensor(coordinator, uid))
+        if device.get("valve1") is not None:
+            entities.append(DiyHomeValveProtectionSensor(coordinator, uid, valve_num=1))
+        if device.get("valve2") is not None:
+            entities.append(DiyHomeValveProtectionSensor(coordinator, uid, valve_num=2))
+        for alarm in device.get("alarms", []):
+            entities.append(
+                DiyHomeAlarmBinarySensor(coordinator, uid, alarm["id"], alarm.get("type", ""))
+            )
     async_add_entities(entities)
 
 
@@ -130,3 +139,96 @@ class DiyHomePumpRelaySensor(DiyHomeEntity, BinarySensorEntity):
             "mode": pump.get("mode"),
             "is_locked": pump.get("is_locked", False),
         }
+
+
+class DiyHomeLeakSensor(DiyHomeEntity, BinarySensorEntity):
+    """Perdita d'acqua rilevata — evento leak non risolto presente."""
+
+    _attr_translation_key = "leak_detected"
+    _attr_device_class = BinarySensorDeviceClass.MOISTURE
+    _attr_icon = "mdi:pipe-leak"
+
+    def __init__(self, coordinator: DiyHomeCoordinator, uid: str) -> None:
+        super().__init__(coordinator, uid)
+        self._attr_unique_id = f"{uid}_leak_detected"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._device_data.get("leak_active", False))
+
+
+class DiyHomeValveProtectionSensor(DiyHomeEntity, BinarySensorEntity):
+    """Protezione anti-sovraccarico valvola attiva."""
+
+    _attr_device_class = BinarySensorDeviceClass.SAFETY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:shield-check"
+
+    def __init__(
+        self, coordinator: DiyHomeCoordinator, uid: str, valve_num: int = 1
+    ) -> None:
+        super().__init__(coordinator, uid)
+        self._valve_num = valve_num
+        self._attr_translation_key = (
+            "valve1_protection" if valve_num == 1 else "valve2_protection"
+        )
+        self._attr_unique_id = f"{uid}_valve{valve_num}_protection"
+
+    @property
+    def is_on(self) -> bool:
+        valve = self._device_data.get(f"valve{self._valve_num}") or {}
+        return bool(valve.get("protection_enabled", False))
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self._device_data.get(f"valve{self._valve_num}") is not None
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        valve = self._device_data.get(f"valve{self._valve_num}") or {}
+        return {"protection_time": valve.get("protection_time")}
+
+
+class DiyHomeAlarmBinarySensor(DiyHomeEntity, BinarySensorEntity):
+    """Singola regola allarme — attiva/inattiva per soglia configurata."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:alert-circle"
+
+    def __init__(
+        self,
+        coordinator: DiyHomeCoordinator,
+        uid: str,
+        alarm_id: int,
+        alarm_type: str,
+    ) -> None:
+        super().__init__(coordinator, uid)
+        self._alarm_id = alarm_id
+        self._alarm_type = alarm_type
+        self._attr_unique_id = f"{uid}_alarm_{alarm_id}"
+        self._attr_name = f"Alarm {alarm_type.replace('_', ' ').title()}"
+
+    @property
+    def is_on(self) -> bool:
+        for a in self._device_data.get("alarms", []):
+            if a.get("id") == self._alarm_id:
+                return bool(a.get("active", False))
+        return False
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._device_data.get("online", False)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        for a in self._device_data.get("alarms", []):
+            if a.get("id") == self._alarm_id:
+                return {
+                    "type":      a.get("type"),
+                    "threshold": a.get("threshold"),
+                    "enabled":   a.get("enabled"),
+                }
+        return {}
