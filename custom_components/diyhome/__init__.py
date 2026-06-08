@@ -1122,30 +1122,15 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     async def async_send_command(
         self, uid: str, action: str, payload: dict | None = None
     ) -> bool:
-        """Invia comando: MQTT locale → LAN HTTP → cloud (priorità decrescente)."""
-        # 1. MQTT locale: latenza <10ms, zero internet
-        if self.mqtt_connected and self._mqtt_pub is not None:
-            try:
-                mqtt_topic, mqtt_payload = self._action_to_mqtt(uid, action, payload)
-                if mqtt_topic:
-                    import aiomqtt  # noqa: PLC0415
-                    await self._mqtt_pub.publish(  # type: ignore[attr-defined]
-                        mqtt_topic, json.dumps(mqtt_payload).encode(), qos=1
-                    )
-                    _LOGGER.debug(
-                        "DiyHome MQTT: cmd %s → %s", action, mqtt_topic
-                    )
-                    self.hass.async_create_task(
-                        self._confirm_lan_after_command(uid),
-                        name=f"diyhome_confirm_mqtt_{uid}",
-                    )
-                    return True
-            except Exception as err:
-                _LOGGER.debug(
-                    "DiyHome MQTT cmd error (%s) — fallback LAN/cloud", err
-                )
+        """Invia comando: LAN HTTP → MQTT locale → cloud (priorità decrescente).
 
-        # 2. LAN diretta (HTTP)
+        LAN HTTP è il canale primario perché:
+        - topic MQTT locale non ancora allineati al firmware (valve1/set vs valve/set)
+        - LAN HTTP usa lo stesso CommandDispatcher firmware di cloud e app mobile
+        - zero ambiguità su payload e topic
+        MQTT locale è mantenuto come secondario per scenari Mosquitto puri (senza LAN HTTP).
+        """
+        # 1. LAN diretta (HTTP) — canale primario, stessa latenza di MQTT ma affidabile
         if self.lan_mode and self.lan_client.is_available():
             # FIX C3: rinnova il JWT LAN se manca o scade entro 24h.
             # Senza questo, dopo 30gg il token scadeva → send_command restituiva
@@ -1167,7 +1152,26 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 _LOGGER.debug("DiyHome LAN command error (%s), fallback cloud", err)
 
-        # Cloud fallback
+        # 2. MQTT locale — secondario (topic non ancora allineati al firmware)
+        # valve1/set firmware non corrisponde a valve/set → usare solo se LAN HTTP non disponibile
+        if self.mqtt_connected and self._mqtt_pub is not None:
+            try:
+                mqtt_topic, mqtt_payload = self._action_to_mqtt(uid, action, payload)
+                if mqtt_topic:
+                    import aiomqtt  # noqa: PLC0415
+                    await self._mqtt_pub.publish(  # type: ignore[attr-defined]
+                        mqtt_topic, json.dumps(mqtt_payload).encode(), qos=1
+                    )
+                    _LOGGER.debug("DiyHome MQTT: cmd %s → %s", action, mqtt_topic)
+                    self.hass.async_create_task(
+                        self._confirm_lan_after_command(uid),
+                        name=f"diyhome_confirm_mqtt_{uid}",
+                    )
+                    return True
+            except Exception as err:
+                _LOGGER.debug("DiyHome MQTT cmd error (%s) — fallback cloud", err)
+
+        # 3. Cloud fallback
         cmd_payload: dict = {"action": action}
         if payload:
             cmd_payload.update(payload)
