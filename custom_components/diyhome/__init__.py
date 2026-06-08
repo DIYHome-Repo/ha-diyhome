@@ -990,13 +990,16 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     def _action_to_mqtt(uid: str, action: str, extra: dict | None) -> tuple[str | None, dict]:
         """Mappa action HA → (topic MQTT device, payload). Ritorna (None, {}) se non mappato."""
         base = f"diyhome/{uid}"
+        # Topic allineati al firmware: valve/set (non valve1/set) per valve1,
+        # valve2/set per valve2. Pump usa "mode" (non "action") come il firmware.
+        # Connettore whitelist: diyhome/+/valve/set e diyhome/+/valve2/set — ok.
         _MAP: dict[str, tuple[str, dict]] = {
-            "valve_open":   (f"{base}/valve1/set", {"state": "open"}),
-            "valve_close":  (f"{base}/valve1/set", {"state": "close"}),
+            "valve_open":   (f"{base}/valve/set",  {"state": "open"}),
+            "valve_close":  (f"{base}/valve/set",  {"state": "close"}),
             "valve2_open":  (f"{base}/valve2/set", {"state": "open"}),
             "valve2_close": (f"{base}/valve2/set", {"state": "close"}),
-            "pump_enable":  (f"{base}/pump/set",   {"action": "enable"}),
-            "pump_disable": (f"{base}/pump/set",   {"action": "disable"}),
+            "pump_enable":  (f"{base}/pump/set",   {"mode": "AUTO_ENABLE"}),
+            "pump_disable": (f"{base}/pump/set",   {"mode": "AUTO_DISABLE"}),
         }
         if action not in _MAP:
             return None, {}
@@ -1124,13 +1127,13 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     ) -> bool:
         """Invia comando: LAN HTTP → MQTT locale → cloud (priorità decrescente).
 
-        LAN HTTP è il canale primario perché:
-        - topic MQTT locale non ancora allineati al firmware (valve1/set vs valve/set)
-        - LAN HTTP usa lo stesso CommandDispatcher firmware di cloud e app mobile
-        - zero ambiguità su payload e topic
-        MQTT locale è mantenuto come secondario per scenari Mosquitto puri (senza LAN HTTP).
+        LAN HTTP è il canale primario:
+        - latenza equivalente a MQTT locale ma usa lo stesso CommandDispatcher firmware
+        - commandId, expiresAt, payload nested: stessa struttura di cloud e app mobile
+        MQTT locale è secondario: utile in scenari Mosquitto puri senza IP diretto.
+        Topic allineati firmware: valve/set, valve2/set, pump/set con mode AUTO_ENABLE/DISABLE.
         """
-        # 1. LAN diretta (HTTP) — canale primario, stessa latenza di MQTT ma affidabile
+        # 1. LAN diretta (HTTP) — canale primario
         if self.lan_mode and self.lan_client.is_available():
             # FIX C3: rinnova il JWT LAN se manca o scade entro 24h.
             # Senza questo, dopo 30gg il token scadeva → send_command restituiva
@@ -1152,8 +1155,8 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 _LOGGER.debug("DiyHome LAN command error (%s), fallback cloud", err)
 
-        # 2. MQTT locale — secondario (topic non ancora allineati al firmware)
-        # valve1/set firmware non corrisponde a valve/set → usare solo se LAN HTTP non disponibile
+        # 2. MQTT locale — secondario (topic allineati v2.6.2: valve/set, pump mode)
+        # Usato solo se LAN HTTP non disponibile (es. HA container senza IP diretto)
         if self.mqtt_connected and self._mqtt_pub is not None:
             try:
                 mqtt_topic, mqtt_payload = self._action_to_mqtt(uid, action, payload)
