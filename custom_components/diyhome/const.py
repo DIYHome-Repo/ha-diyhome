@@ -9,6 +9,12 @@ CLOUD_URL = "https://diyhome.cloud"
 # Options keys — hostname mDNS (stabile anche dopo riavvio router)
 CONF_MDNS_HOSTNAME = "mdns_hostname"  # es. "DIYHome_WT1_AABBCC" → .local risolve l'IP corrente
 
+# Options keys — broker MQTT locale (Ondata D Local Connector / mosquitto)
+CONF_MQTT_HOST     = "mqtt_host"      # IP/hostname broker locale, es. "192.168.1.10"
+CONF_MQTT_PORT     = "mqtt_port"      # Default 1883
+CONF_MQTT_USERNAME = "mqtt_username"  # Opzionale
+CONF_MQTT_PASSWORD = "mqtt_password"  # Opzionale
+
 # Intervalli
 LAN_SCAN_INTERVAL   = 10   # secondi watchdog HTTP LAN
 CLOUD_SCAN_INTERVAL = 30   # secondi polling REST cloud (emergenza)
