@@ -21,6 +21,10 @@ from .const import (
     CLOUD_SCAN_INTERVAL,
     CLOUD_URL,
     CONF_MDNS_HOSTNAME,
+    CONF_MQTT_HOST,
+    CONF_MQTT_PASSWORD,
+    CONF_MQTT_PORT,
+    CONF_MQTT_USERNAME,
     DOMAIN,
     LAN_CONNECT_TIMEOUT,
     LAN_RETRY_INTERVAL,
@@ -234,6 +238,11 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         # per evitare il race condition: cmd LAN → cloud SSE porta stato vecchio → rollback.
         self._lan_last_update: float = 0.0
 
+        # DualModeCoordinator: MQTT locale (Ondata #28)
+        self._mqtt_task: asyncio.Task | None = None
+        self.mqtt_connected: bool = False
+        self._mqtt_pub: object | None = None  # aiomqtt.Client per publish comandi
+
     # ── Ciclo di vita ─────────────────────────────────────────────────────────
 
     async def async_start(self) -> None:
@@ -262,6 +271,34 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         else:
             await self._activate_cloud_mode()
 
+        # Avvia MQTT locale se configurato (indipendente da LAN/cloud mode)
+        mqtt_host = (
+            self._entry.options.get(CONF_MQTT_HOST)
+            or self._entry.data.get(CONF_MQTT_HOST, "")
+        ).strip()
+        if mqtt_host:
+            mqtt_port = int(
+                self._entry.options.get(CONF_MQTT_PORT)
+                or self._entry.data.get(CONF_MQTT_PORT, 1883)
+            )
+            mqtt_user = (
+                self._entry.options.get(CONF_MQTT_USERNAME)
+                or self._entry.data.get(CONF_MQTT_USERNAME, "")
+            ).strip()
+            mqtt_pass = (
+                self._entry.options.get(CONF_MQTT_PASSWORD)
+                or self._entry.data.get(CONF_MQTT_PASSWORD, "")
+            )
+            if not self._mqtt_task or self._mqtt_task.done():
+                self._mqtt_task = self.hass.async_create_task(
+                    self._mqtt_loop(mqtt_host, mqtt_port, mqtt_user, mqtt_pass),
+                    name=f"diyhome_mqtt_{self._entry.entry_id}",
+                )
+                _LOGGER.info(
+                    "DiyHome: MQTT locale configurato (%s:%d) — avvio loop",
+                    mqtt_host, mqtt_port,
+                )
+
     async def async_stop(self) -> None:
         """Ferma tutto in modo pulito."""
         self._stopping = True
@@ -281,6 +318,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             self._lan_watchdog_task,
             self._cloud_sse_task,
             self._lan_retry_task,
+            self._mqtt_task,
         ):
             if task and not task.done():
                 task.cancel()
@@ -288,6 +326,9 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         self._lan_watchdog_task = None
         self._cloud_sse_task = None
         self._lan_retry_task = None
+        self._mqtt_task = None
+        self.mqtt_connected = False
+        self._mqtt_pub = None
 
     # ── Probe LAN ─────────────────────────────────────────────────────────────
 
@@ -943,10 +984,168 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.debug("DiyHome: conferma LAN post-cmd uid=%s fallita: %s", uid, err)
 
+    # ── DualModeCoordinator: MQTT locale ─────────────────────────────────────
+
+    @staticmethod
+    def _action_to_mqtt(uid: str, action: str, extra: dict | None) -> tuple[str | None, dict]:
+        """Mappa action HA → (topic MQTT device, payload). Ritorna (None, {}) se non mappato."""
+        base = f"diyhome/{uid}"
+        _MAP: dict[str, tuple[str, dict]] = {
+            "valve_open":   (f"{base}/valve1/set", {"state": "open"}),
+            "valve_close":  (f"{base}/valve1/set", {"state": "close"}),
+            "valve2_open":  (f"{base}/valve2/set", {"state": "open"}),
+            "valve2_close": (f"{base}/valve2/set", {"state": "close"}),
+            "pump_enable":  (f"{base}/pump/set",   {"action": "enable"}),
+            "pump_disable": (f"{base}/pump/set",   {"action": "disable"}),
+        }
+        if action not in _MAP:
+            return None, {}
+        topic, base_payload = _MAP[action]
+        merged = {**base_payload, **(extra or {})}
+        return topic, merged
+
+    async def _mqtt_loop(
+        self, host: str, port: int, username: str, password: str
+    ) -> None:
+        """Loop riconnessione al broker MQTT locale — aiomqtt come primary source."""
+        try:
+            import aiomqtt  # noqa: PLC0415
+        except ImportError:
+            _LOGGER.error(
+                "DiyHome: pacchetto aiomqtt non trovato — "
+                "reinstalla l'integrazione per abilitare MQTT locale"
+            )
+            return
+
+        retry_delay = 5
+        while not self._stopping:
+            try:
+                kwargs: dict = {"hostname": host, "port": port, "timeout": 10}
+                if username:
+                    kwargs["username"] = username
+                    kwargs["password"] = password
+
+                async with aiomqtt.Client(**kwargs) as mqtt_client:
+                    self._mqtt_pub = mqtt_client
+                    self.mqtt_connected = True
+                    retry_delay = 5  # reset backoff
+                    _LOGGER.info(
+                        "DiyHome MQTT: connesso a %s:%d", host, port
+                    )
+
+                    # Sottoscrivi ai topic di ogni device conosciuto
+                    known_uids = list(self.data.keys()) if self.data else []
+                    if known_uids:
+                        for dev_uid in known_uids:
+                            await mqtt_client.subscribe(
+                                f"diyhome/{dev_uid}/shadow/reported", qos=1
+                            )
+                    else:
+                        await mqtt_client.subscribe("diyhome/+/shadow/reported", qos=1)
+
+                    async for msg in mqtt_client.messages:
+                        if self._stopping:
+                            break
+                        topic_str = str(msg.topic)
+                        parts = topic_str.split("/")
+                        if len(parts) < 4 or parts[0] != "diyhome":
+                            continue
+                        dev_uid = parts[1]
+                        msg_type = parts[2]
+                        msg_sub  = parts[3] if len(parts) > 3 else ""
+
+                        if msg_type == "shadow" and msg_sub == "reported":
+                            try:
+                                payload = json.loads(msg.payload)
+                            except Exception:
+                                continue
+                            await self._handle_mqtt_shadow(dev_uid, payload)
+
+            except Exception as err:
+                self._mqtt_pub = None
+                self.mqtt_connected = False
+                if not self._stopping:
+                    _LOGGER.warning(
+                        "DiyHome MQTT: errore connessione (%s) — retry tra %ds",
+                        err, retry_delay,
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, 120)
+
+        self._mqtt_pub = None
+        self.mqtt_connected = False
+
+    async def _handle_mqtt_shadow(self, uid: str, reported: dict) -> None:
+        """Aggiorna dati coordinator da shadow/reported MQTT (real-time, zero cloud)."""
+        if not self.data or uid not in self.data:
+            return
+        current = dict(self.data[uid])
+
+        # Valve 1
+        v1 = reported.get("valve1")
+        if isinstance(v1, dict):
+            current["valve1_state"] = v1.get("state", current.get("valve1_state"))
+        elif isinstance(v1, str):
+            current["valve1_state"] = v1
+
+        # Valve 2
+        v2 = reported.get("valve2")
+        if isinstance(v2, dict):
+            current["valve2_state"] = v2.get("state", current.get("valve2_state"))
+        elif isinstance(v2, str):
+            current["valve2_state"] = v2
+
+        # Pompa
+        pump = reported.get("pump")
+        if isinstance(pump, dict):
+            current["pump"] = {**(current.get("pump") or {}), **pump}
+        elif isinstance(pump, bool):
+            current["pump"] = {**(current.get("pump") or {}), "isOn": pump}
+
+        # Sensori
+        sensors = reported.get("sensors")
+        if isinstance(sensors, dict):
+            current["sensors"] = {**(current.get("sensors") or {}), **sensors}
+
+        # Zone irrigazione
+        zones = reported.get("zones")
+        if isinstance(zones, dict):
+            current["zones"] = {**(current.get("zones") or {}), **zones}
+
+        new_data = {**self.data, uid: current}
+        self._lan_last_update = time.monotonic()  # anti-stale cloud SSE
+        self.async_set_updated_data(new_data)
+        _LOGGER.debug("DiyHome MQTT: shadow/reported → %s aggiornato", uid)
+
+    # ── Invio comandi ─────────────────────────────────────────────────────────
+
     async def async_send_command(
         self, uid: str, action: str, payload: dict | None = None
     ) -> bool:
-        """Invia comando: LAN diretta se disponibile, cloud altrimenti."""
+        """Invia comando: MQTT locale → LAN HTTP → cloud (priorità decrescente)."""
+        # 1. MQTT locale: latenza <10ms, zero internet
+        if self.mqtt_connected and self._mqtt_pub is not None:
+            try:
+                mqtt_topic, mqtt_payload = self._action_to_mqtt(uid, action, payload)
+                if mqtt_topic:
+                    import aiomqtt  # noqa: PLC0415
+                    await self._mqtt_pub.publish(  # type: ignore[attr-defined]
+                        mqtt_topic, json.dumps(mqtt_payload).encode(), qos=1
+                    )
+                    _LOGGER.debug(
+                        "DiyHome MQTT: cmd %s → %s", action, mqtt_topic
+                    )
+                    self.hass.async_create_task(
+                        self._confirm_lan_after_command(uid),
+                        name=f"diyhome_confirm_mqtt_{uid}",
+                    )
+                    return True
+            except Exception as err:
+                _LOGGER.debug(
+                    "DiyHome MQTT cmd error (%s) — fallback LAN/cloud", err
+                )
+
+        # 2. LAN diretta (HTTP)
         if self.lan_mode and self.lan_client.is_available():
             # FIX C3: rinnova il JWT LAN se manca o scade entro 24h.
             # Senza questo, dopo 30gg il token scadeva → send_command restituiva
