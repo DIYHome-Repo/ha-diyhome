@@ -14,6 +14,10 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from .const import (
     CLOUD_URL,
     CONF_MDNS_HOSTNAME,
+    CONF_MQTT_HOST,
+    CONF_MQTT_PASSWORD,
+    CONF_MQTT_PORT,
+    CONF_MQTT_USERNAME,
     DOMAIN,
 )
 
@@ -328,21 +332,53 @@ class DiyHomeOptionsFlowHandler(config_entries.OptionsFlow):
             self._config_entry.options.get(CONF_MDNS_HOSTNAME)
             or self._config_entry.data.get(CONF_MDNS_HOSTNAME, "")
         )
+        cur_mqtt_host: str = (
+            self._config_entry.options.get(CONF_MQTT_HOST, "")
+            or self._config_entry.data.get(CONF_MQTT_HOST, "")
+        )
+        cur_mqtt_port: int = int(
+            self._config_entry.options.get(CONF_MQTT_PORT)
+            or self._config_entry.data.get(CONF_MQTT_PORT, 1883)
+        )
+        cur_mqtt_user: str = (
+            self._config_entry.options.get(CONF_MQTT_USERNAME, "")
+            or self._config_entry.data.get(CONF_MQTT_USERNAME, "")
+        )
 
         if user_input is not None:
             new_hostname: str = user_input.get(CONF_MDNS_HOSTNAME, "").strip()
-            return self.async_create_entry(
-                title="",
-                data={CONF_MDNS_HOSTNAME: new_hostname},
-            )
+            new_mqtt_host: str = user_input.get(CONF_MQTT_HOST, "").strip()
+            opts: dict = {CONF_MDNS_HOSTNAME: new_hostname}
+            if new_mqtt_host:
+                opts[CONF_MQTT_HOST] = new_mqtt_host
+                opts[CONF_MQTT_PORT] = int(user_input.get(CONF_MQTT_PORT, 1883))
+                opts[CONF_MQTT_USERNAME] = user_input.get(CONF_MQTT_USERNAME, "").strip()
+                raw_pass = user_input.get(CONF_MQTT_PASSWORD, "")
+                # Mantieni la password esistente se il campo è vuoto (non sovrascrivere)
+                if raw_pass:
+                    opts[CONF_MQTT_PASSWORD] = raw_pass
+                elif cur_mqtt_host == new_mqtt_host:
+                    existing_pass = (
+                        self._config_entry.options.get(CONF_MQTT_PASSWORD, "")
+                        or self._config_entry.data.get(CONF_MQTT_PASSWORD, "")
+                    )
+                    opts[CONF_MQTT_PASSWORD] = existing_pass
+            return self.async_create_entry(title="", data=opts)
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(
-                        CONF_MDNS_HOSTNAME, default=current_hostname
-                    ): str,
+                    vol.Optional(CONF_MDNS_HOSTNAME, default=current_hostname): str,
+                    vol.Optional(CONF_MQTT_HOST,     default=cur_mqtt_host):    str,
+                    vol.Optional(CONF_MQTT_PORT,     default=cur_mqtt_port):    int,
+                    vol.Optional(CONF_MQTT_USERNAME, default=cur_mqtt_user):    str,
+                    # Password: campo vuoto = mantieni quella salvata
+                    vol.Optional(CONF_MQTT_PASSWORD, default=""):              str,
                 }
             ),
+            description_placeholders={
+                "mqtt_hint": "Lascia vuoto per disabilitare MQTT locale. "
+                             "Inserisci IP/hostname del tuo broker (es. 192.168.1.10).",
+            },
         )
