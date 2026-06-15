@@ -115,6 +115,15 @@
       "forecast_cost_month": {
         "name": "Szacowany koszt miesięczny"
       },
+      "ambient_temperature": {
+        "name": "Temperatura otoczenia"
+      },
+      "ambient_humidity": {
+        "name": "Wilgotność otoczenia"
+      },
+      "upstream_leak_rate": {
+        "name": "Przepływ wycieku od strony zasilania"
+      },
       "zone_timer": {
         "name": "{zone_name} pozostały czas"
       },
