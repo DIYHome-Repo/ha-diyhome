@@ -115,6 +115,15 @@
       "forecast_cost_month": {
         "name": "Coût mensuel estimé"
       },
+      "ambient_temperature": {
+        "name": "Température ambiante"
+      },
+      "ambient_humidity": {
+        "name": "Humidité ambiante"
+      },
+      "upstream_leak_rate": {
+        "name": "Débit de fuite en amont"
+      },
       "zone_timer": {
         "name": "{zone_name} temps restant"
       },
