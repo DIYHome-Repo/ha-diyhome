@@ -46,6 +46,13 @@ _CLOUD_REALTIME_EVENTS: frozenset[str] = frozenset({
     "pump_update",
 })
 
+# Telemetria real-time che aggiorna solo un sotto-campo del device (patch parziale).
+# Il payload contiene { uid, data: {...} } — NON lo stato completo del device.
+_CLOUD_PATCH_EVENTS: dict[str, str] = {
+    "upstream_leak": "upstream_leak",
+    "sensors":       "sensors_telemetry",
+}
+
 # FIX P5: LAN SSE accettava solo "ha_state"; ora accetta varianti firmware.
 _LAN_REALTIME_EVENTS: frozenset[str] = frozenset({
     "ha_state",
@@ -871,6 +878,31 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                     else:
                                         _LOGGER.debug(
                                             "DiyHome cloud SSE: uid=%s non in self.data", uid
+                                        )
+                                except Exception:
+                                    pass
+                                current_event = None
+
+                            # Patch parziale: upstream_leak, sensors, etc.
+                            # Payload: { uid, data: { flowRate, active, ... } }
+                            elif (
+                                line.startswith("data:")
+                                and current_event in _CLOUD_PATCH_EVENTS
+                            ):
+                                try:
+                                    payload = json.loads(line[5:].strip())
+                                    uid = payload.get("uid")
+                                    field_key = _CLOUD_PATCH_EVENTS[current_event]
+                                    patch_data = payload.get("data") or payload.get("state")
+                                    if uid and self.data and uid in self.data and patch_data:
+                                        new_data = dict(self.data)
+                                        current_dev = dict(new_data[uid])
+                                        current_dev[field_key] = patch_data
+                                        new_data[uid] = current_dev
+                                        self.async_set_updated_data(new_data)
+                                        _LOGGER.debug(
+                                            "DiyHome cloud SSE patch: '%s' uid=%s → %s aggiornato",
+                                            current_event, uid, field_key,
                                         )
                                 except Exception:
                                     pass
