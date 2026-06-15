@@ -79,7 +79,19 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
-        self._optimistic_is_on = None
+        if self._optimistic_is_on is not None:
+            # Cancella l'ottimistico SOLO quando il dato reale del coordinator
+            # conferma lo stato target — evita il rimbalzo causato da aggiornamenti
+            # cloud SSE che arrivano con lo stato vecchio prima della conferma LAN.
+            valve_data = self._device_data.get(f"valve{self._valve}")
+            real_is_on = (
+                valve_data.get("is_open", False)
+                if isinstance(valve_data, dict)
+                else None
+            )
+            if real_is_on is not None and real_is_on == self._optimistic_is_on:
+                self._optimistic_is_on = None
+            # else: mantieni ottimistico — il firmware non ha ancora aggiornato
         super()._handle_coordinator_update()
 
     @property
@@ -152,7 +164,10 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
-        self._optimistic_is_on = None
+        if self._optimistic_is_on is not None:
+            real_is_on = self._get_zone().get("is_active")
+            if real_is_on is not None and real_is_on == self._optimistic_is_on:
+                self._optimistic_is_on = None
         super()._handle_coordinator_update()
 
     @property
@@ -220,7 +235,15 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
         )
 
     def _handle_coordinator_update(self) -> None:
-        self._optimistic_is_on = None
+        if self._optimistic_is_on is not None:
+            pump = self._device_data.get("pump")
+            real_is_on = (
+                (pump.get("mode") == "AUTO_ENABLE")
+                if isinstance(pump, dict) and pump.get("mode") is not None
+                else None
+            )
+            if real_is_on is not None and real_is_on == self._optimistic_is_on:
+                self._optimistic_is_on = None
         super()._handle_coordinator_update()
 
     @property
