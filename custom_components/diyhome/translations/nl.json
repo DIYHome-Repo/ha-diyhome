@@ -115,15 +115,6 @@
       "forecast_cost_month": {
         "name": "Geschatte maandkosten"
       },
-      "ambient_temperature": {
-        "name": "Omgevingstemperatuur"
-      },
-      "ambient_humidity": {
-        "name": "Omgevingsvochtigheid"
-      },
-      "upstream_leak_rate": {
-        "name": "Debiet lek stroomopwaarts"
-      },
       "zone_timer": {
         "name": "{zone_name} resterende tijd"
       },

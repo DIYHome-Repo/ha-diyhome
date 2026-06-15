@@ -115,15 +115,6 @@
       "forecast_cost_month": {
         "name": "Coste mensual estimado"
       },
-      "ambient_temperature": {
-        "name": "Temperatura ambiente"
-      },
-      "ambient_humidity": {
-        "name": "Humedad ambiente"
-      },
-      "upstream_leak_rate": {
-        "name": "Caudal de fuga aguas arriba"
-      },
       "zone_timer": {
         "name": "{zone_name} tiempo restante"
       },
