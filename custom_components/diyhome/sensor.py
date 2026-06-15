@@ -234,6 +234,40 @@ MAIN_SENSOR_TYPES: tuple[DiyHomeSensorDescription, ...] = (
             and d.get("forecast", {}).get("cost_month") is not None
         ),
     ),
+    DiyHomeSensorDescription(
+        key="ambient_temperature",
+        translation_key="ambient_temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:thermometer",
+        value_fn=lambda d: d.get("temperature"),
+        available_fn=lambda d: d.get("online", False) and d.get("temperature") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="ambient_humidity",
+        translation_key="ambient_humidity",
+        native_unit_of_measurement=PERCENTAGE,
+        device_class=SensorDeviceClass.HUMIDITY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:water-percent",
+        value_fn=lambda d: d.get("humidity"),
+        available_fn=lambda d: d.get("online", False) and d.get("humidity") is not None,
+    ),
+    DiyHomeSensorDescription(
+        key="upstream_leak_rate",
+        translation_key="upstream_leak_rate",
+        native_unit_of_measurement=UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:leak",
+        value_fn=lambda d: d.get("upstream_leak", {}).get("flowRate") if d.get("upstream_leak") else None,
+        available_fn=lambda d: (
+            d.get("online", False)
+            and d.get("upstream_leak") is not None
+            and d.get("upstream_leak", {}).get("flowRate") is not None
+        ),
+    ),
 )
 
 # ── Sensori diagnostici (Diagnostics section) ─────────────────────────────────
