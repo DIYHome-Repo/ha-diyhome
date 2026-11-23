@@ -960,7 +960,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             devices = {
                 d["uid"]: _norm_cloud_state(d)
                 for d in data.get("devices", [])
-                if d.get("uid")
+                if d.get("uid") and d.get("productTypeId", "wt1-v1") == "wt1-v1"
             }
             for uid, device in devices.items():
                 online = device.get("online", False)
@@ -1019,25 +1019,25 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     # ── DualModeCoordinator: MQTT locale ─────────────────────────────────────
 
     @staticmethod
-    def _action_to_mqtt(uid: str, action: str, extra: dict | None) -> tuple[str | None, dict]:
-        """Mappa action HA → (topic MQTT device, payload). Ritorna (None, {}) se non mappato."""
+    def _action_to_mqtt(uid: str, action: str, extra: dict | None) -> tuple[str | None, str]:
+        """Mappa action HA → (topic MQTT device, payload testo). (None, "") se non mappato."""
         base = f"diyhome/{uid}"
-        # Topic allineati al firmware: valve/set (non valve1/set) per valve1,
-        # valve2/set per valve2. Pump usa "mode" (non "action") come il firmware.
-        # Connettore whitelist: diyhome/+/valve/set e diyhome/+/valve2/set — ok.
-        _MAP: dict[str, tuple[str, dict]] = {
-            "valve_open":   (f"{base}/valve/set",  {"state": "open"}),
-            "valve_close":  (f"{base}/valve/set",  {"state": "close"}),
-            "valve2_open":  (f"{base}/valve2/set", {"state": "open"}),
-            "valve2_close": (f"{base}/valve2/set", {"state": "close"}),
-            "pump_enable":  (f"{base}/pump/set",   {"mode": "AUTO_ENABLE"}),
-            "pump_disable": (f"{base}/pump/set",   {"mode": "AUTO_DISABLE"}),
+        # Topic e payload allineati al firmware (mqtt_module.cpp onMessage):
+        # valve/set e valve2/set accettano solo il testo esatto "ON"/"OFF";
+        # pump/set accetta "ON" (AUTO_ENABLE) / "OFF" (FORCED_DISABLED).
+        # Un payload JSON veniva scartato in silenzio dal firmware.
+        # Connettore whitelist: diyhome/+/valve/set, valve2/set, pump/set — ok.
+        _MAP: dict[str, tuple[str, str]] = {
+            "valve_open":   (f"{base}/valve/set",  "ON"),
+            "valve_close":  (f"{base}/valve/set",  "OFF"),
+            "valve2_open":  (f"{base}/valve2/set", "ON"),
+            "valve2_close": (f"{base}/valve2/set", "OFF"),
+            "pump_enable":  (f"{base}/pump/set",   "ON"),
+            "pump_disable": (f"{base}/pump/set",   "OFF"),
         }
         if action not in _MAP:
-            return None, {}
-        topic, base_payload = _MAP[action]
-        merged = {**base_payload, **(extra or {})}
-        return topic, merged
+            return None, ""
+        return _MAP[action]
 
     async def _mqtt_loop(
         self, host: str, port: int, username: str, password: str
@@ -1116,19 +1116,26 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             return
         current = dict(self.data[uid])
 
-        # Valve 1
-        v1 = reported.get("valve1")
-        if isinstance(v1, dict):
-            current["valve1_state"] = v1.get("state", current.get("valve1_state"))
-        elif isinstance(v1, str):
-            current["valve1_state"] = v1
-
-        # Valve 2
-        v2 = reported.get("valve2")
-        if isinstance(v2, dict):
-            current["valve2_state"] = v2.get("state", current.get("valve2_state"))
-        elif isinstance(v2, str):
-            current["valve2_state"] = v2
+        # Firmware shadow uses valve/valve2; entities consume valve1/valve2.
+        # Missing legacy qualification never erases an explicit UNKNOWN.
+        for key, payload in (("valve1", reported.get("valve", reported.get("valve1"))),
+                             ("valve2", reported.get("valve2"))):
+            if isinstance(payload, dict):
+                valve = dict(current.get(key) or {})
+                reported_open = payload.get("isOpen", payload.get("is_open"))
+                if isinstance(reported_open, bool):
+                    valve["is_open"] = reported_open
+                elif payload.get("state") in ("open", "closed"):
+                    valve["is_open"] = payload["state"] == "open"
+                qualified = payload.get("stateQualified", payload.get("state_qualified"))
+                if isinstance(qualified, bool):
+                    valve["state_qualified"] = qualified
+                current[key] = valve
+                current[f"{key}_state"] = payload.get("state", current.get(f"{key}_state"))
+            elif isinstance(payload, str):
+                current[f"{key}_state"] = payload
+                if payload in ("open", "closed"):
+                    current[key] = {**(current.get(key) or {}), "is_open": payload == "open"}
 
         # Pompa
         pump = reported.get("pump")
@@ -1157,13 +1164,13 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
     async def async_send_command(
         self, uid: str, action: str, payload: dict | None = None
     ) -> bool:
-        """Invia comando: LAN HTTP → MQTT locale → cloud (priorità decrescente).
+        """Invia comando: LAN HTTP → cloud (priorità decrescente).
 
         LAN HTTP è il canale primario:
-        - latenza equivalente a MQTT locale ma usa lo stesso CommandDispatcher firmware
+        - usa lo stesso CommandDispatcher firmware e restituisce l'esito del device
         - commandId, expiresAt, payload nested: stessa struttura di cloud e app mobile
-        MQTT locale è secondario: utile in scenari Mosquitto puri senza IP diretto.
-        Topic allineati firmware: valve/set, valve2/set, pump/set con mode AUTO_ENABLE/DISABLE.
+        MQTT locale non è usato per i comandi (vedi punto 2 e INT-003): resta
+        solo come sorgente di stato quando configurato.
         """
         # 1. LAN diretta (HTTP) — canale primario
         if self.lan_mode and self.lan_client.is_available():
@@ -1187,24 +1194,14 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 _LOGGER.debug("DiyHome LAN command error (%s), fallback cloud", err)
 
-        # 2. MQTT locale — secondario (topic allineati v2.6.2: valve/set, pump mode)
-        # Usato solo se LAN HTTP non disponibile (es. HA container senza IP diretto)
-        if self.mqtt_connected and self._mqtt_pub is not None:
-            try:
-                mqtt_topic, mqtt_payload = self._action_to_mqtt(uid, action, payload)
-                if mqtt_topic:
-                    import aiomqtt  # noqa: PLC0415
-                    await self._mqtt_pub.publish(  # type: ignore[attr-defined]
-                        mqtt_topic, json.dumps(mqtt_payload).encode(), qos=1
-                    )
-                    _LOGGER.debug("DiyHome MQTT: cmd %s → %s", action, mqtt_topic)
-                    self.hass.async_create_task(
-                        self._confirm_lan_after_command(uid),
-                        name=f"diyhome_confirm_mqtt_{uid}",
-                    )
-                    return True
-            except Exception as err:
-                _LOGGER.debug("DiyHome MQTT cmd error (%s) — fallback cloud", err)
+        # 2. MQTT locale — NON usato per i comandi (INT-003).
+        # Il firmware ascolta il broker locale su diyhome/<DeviceID locale>/…
+        # (config::getDeviceID, es. DiyHome_Tank_XXXXXX), mentre qui è noto solo
+        # l'uid cloud: pubblicare su diyhome/<uid>/… non raggiunge il device e il
+        # comando veniva dichiarato riuscito senza alcuna conferma. Finché non
+        # esiste un contratto condiviso topic/identità con il firmware, i comandi
+        # passano solo da LAN HTTP (con esito del device) o dal cloud.
+        # _action_to_mqtt resta allineato ai payload ON/OFF del firmware.
 
         # 3. Cloud fallback
         cmd_payload: dict = {"action": action}
