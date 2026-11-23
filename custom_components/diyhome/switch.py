@@ -5,8 +5,10 @@ import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 
 from . import DiyHomeCoordinator, DiyHomeRuntimeData
 from .entity import DiyHomeEntity
@@ -55,6 +57,7 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         self._valve = valve
         self._attr_unique_id = f"{uid}_valve{valve}"
         self._optimistic_is_on: bool | None = None
+        self._optimistic_unsub = None
 
     @property
     def translation_placeholders(self) -> dict:
@@ -63,22 +66,27 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
     @property
     def name(self) -> str | None:
         valve_data = self._device_data.get(f"valve{self._valve}", {})
-        return valve_data.get("name") or None
+        return (valve_data or {}).get("name") or None
 
     @property
     def is_on(self) -> bool | None:
+        valve_data = self._device_data.get(f"valve{self._valve}")
+        if not isinstance(valve_data, dict) or valve_data.get("state_qualified") is False:
+            return None
+        reported = valve_data.get("is_open")
+        if not isinstance(reported, bool):
+            return None
         if self._optimistic_is_on is not None:
             return self._optimistic_is_on
-        valve_data = self._device_data.get(f"valve{self._valve}")
-        if valve_data is None:
-            return None
-        return valve_data.get("is_open", False)
+        return reported
 
     @property
     def available(self) -> bool:
         return super().available and self._device_data.get("online", False)
 
     def _handle_coordinator_update(self) -> None:
+        if self.is_on is None:
+            self._clear_optimistic()
         if self._optimistic_is_on is not None:
             # Cancella l'ottimistico SOLO quando il dato reale del coordinator
             # conferma lo stato target — evita il rimbalzo causato da aggiornamenti
@@ -90,9 +98,58 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
                 else None
             )
             if real_is_on is not None and real_is_on == self._optimistic_is_on:
-                self._optimistic_is_on = None
-            # else: mantieni ottimistico — il firmware non ha ancora aggiornato
+                self._clear_optimistic()
+            # else: mantieni ottimistico — il firmware non ha ancora aggiornato,
+            # ma al massimo per _OPTIMISTIC_TIMEOUT_S (vedi _expire_optimistic).
         super()._handle_coordinator_update()
+
+    # Lo stato ottimistico è solo un'anteprima del comando appena inviato:
+    # non deve mai sopravvivere a un comando fallito né restare indefinitamente
+    # se il dispositivo non conferma (es. comando scartato o rifiutato).
+    # Scaduto il tempo, l'entità torna a mostrare lo stato riportato dal device.
+    _OPTIMISTIC_TIMEOUT_S = 15
+
+    def _clear_optimistic(self) -> None:
+        if self._optimistic_unsub is not None:
+            self._optimistic_unsub()
+            self._optimistic_unsub = None
+        self._optimistic_is_on = None
+
+    @callback
+    def _expire_optimistic(self, _now) -> None:
+        self._optimistic_unsub = None
+        if self._optimistic_is_on is None:
+            return
+        _LOGGER.warning(
+            "DiyHome %s valvola %s: comando non confermato entro %ss, "
+            "mostro lo stato riportato dal dispositivo",
+            self._uid, self._valve, self._OPTIMISTIC_TIMEOUT_S,
+        )
+        self._optimistic_is_on = None
+        self.async_write_ha_state()
+
+    async def _async_command(self, target: bool, action: str) -> None:
+        self._clear_optimistic()
+        if self.is_on is not None:
+            self._optimistic_is_on = target
+            self._optimistic_unsub = async_call_later(
+                self.hass, self._OPTIMISTIC_TIMEOUT_S, self._expire_optimistic
+            )
+        self.async_write_ha_state()
+        try:
+            ok = await self._coordinator.async_send_command(self._uid, action)
+        except Exception:
+            self._clear_optimistic()
+            self.async_write_ha_state()
+            raise
+        if ok is False:
+            self._clear_optimistic()
+            self.async_write_ha_state()
+            raise HomeAssistantError(f"DiyHome: comando {action} non accettato")
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._clear_optimistic()
+        await super().async_will_remove_from_hass()
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -107,16 +164,12 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
         return attrs
 
     async def async_turn_on(self, **kwargs) -> None:
-        self._optimistic_is_on = True
-        self.async_write_ha_state()
         action = "valve2_open" if self._valve == 2 else "valve_open"
-        await self._coordinator.async_send_command(self._uid, action)
+        await self._async_command(True, action)
 
     async def async_turn_off(self, **kwargs) -> None:
-        self._optimistic_is_on = False
-        self.async_write_ha_state()
         action = "valve2_close" if self._valve == 2 else "valve_close"
-        await self._coordinator.async_send_command(self._uid, action)
+        await self._async_command(False, action)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -212,6 +212,8 @@ class DiyHomeLanClient:
             if not uid:
                 return None
             from . import _norm_lan_state
+            if raw.get("productTypeId", "wt1-v1") != "wt1-v1":
+                return {}
             return {uid: _norm_lan_state(raw)}
         except Exception as err:
             _LOGGER.debug("DiyHome LAN get_all_states: %s", err)

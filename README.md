@@ -76,3 +76,42 @@ Al momento dell'aggiunta dell'integrazione, Home Assistant aprirà il browser su
 - 📖 [Documentazione ufficiale](https://diyhome.cloud/docs/integrations/home-assistant)
 - 🐛 [Segnala un problema](https://github.com/DIYHome-Repo/ha-diyhome/issues)
 - 🌐 [Sito ufficiale](https://diyhome.cloud)
+
+## Qualificazione dello stato valvola — R21
+
+V1/V2 con `state_qualified: false`, o senza un booleano `is_open`, espongono
+stato sconosciuto (`is_on=None`). Un comando non lo trasforma in OFF/ON;
+CLOSE resta inviabile. Il consumer MQTT conserva la qualificazione di ciascuna
+valvola, anche se un report legacy successivo la omette. Un booleano valido con
+qualificazione null/assente conserva la compatibilita' storica.
+
+Questa correzione e' nel monorepo DIYHome; non attesta una release HACS o
+l'aggiornamento delle installazioni. Distribuzione tramite i workflow esistenti
+HACS Sync → PR, revisione/merge su ha-diyhome e HACS Release Tag. Nessun tag
+creato da questo delta. L'ottimismo generale su dati qualificati (INT-004)
+e i problemi separati dei trasporti restano da trattare.
+
+## Comandi valvola: anteprima limitata e canali — 23/11/2026
+
+Dopo ON/OFF su V1/V2 l'entità mostra subito il target, ma lo ritira se il
+comando fallisce o viene rifiutato (errore visibile in HA) e, senza conferma
+del dispositivo entro 15 secondi, torna allo stato riportato. I comandi
+passano da LAN HTTP (con esito del dispositivo) o dal cloud; il broker MQTT
+locale, se configurato, serve solo a leggere lo stato: il topic che il
+firmware ascolta in locale usa un identificativo diverso dall'uid cloud
+(INT-003). Zone e pompa conservano ancora l'anteprima senza scadenza.
+
+## Versione 2.7.1 — 23/11/2026
+
+Prima release HACS dopo la 2.7.0 pubblicata su `ha-diyhome`. Contiene, rispetto
+a quella copia:
+
+- stato valvola sconosciuto (R21): V1/V2 non qualificate o senza dato mostrano
+  «sconosciuto», non ON/OFF; lo shadow MQTT aggiorna `valve1`/`valve2`;
+- solo dispositivi WT-1 (`productTypeId` `wt1-v1`) da cloud e LAN;
+- anteprima valvola ritirata su errore/rifiuto e scaduta dopo 15 s; comandi non
+  più inviati sul broker MQTT locale (INT-004, INT-003; PR #544).
+
+Distribuzione: workflow `HACS Sync → PR su ha-diyhome` (confirm `SYNC-HACS`),
+revisione e merge della PR su `ha-diyhome`, poi `HACS Release Tag` con
+version `2.7.1` e confirm `RELEASE-HACS`. I workflow li avvia il proprietario.
