@@ -17,17 +17,35 @@
           "email": "Email",
           "password": "Password"
         }
+      },
+      "two_factor": {
+        "title": "Codice di verifica",
+        "description": "Il tuo account usa la verifica in due passaggi. Inserisci il codice a 6 cifre dell'app di autenticazione (o un codice di recupero).",
+        "data": {
+          "code": "Codice"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Accedi di nuovo a DiyHome",
+        "description": "L'accesso per {email} è scaduto o è stato revocato. Inserisci la password per ricollegarti.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
       "invalid_auth": "Email o password non corretti.",
       "cannot_connect": "Impossibile connettersi a DiyHome. Controlla la tua connessione.",
       "unknown": "Errore imprevisto. Controlla i log di Home Assistant.",
-      "no_uid": "Device trovato ma UID mancante. Prova ad aggiornare il firmware."
+      "no_uid": "Device trovato ma UID mancante. Prova ad aggiornare il firmware.",
+      "invalid_2fa": "Codice di verifica errato.",
+      "auth_session_expired": "La verifica è scaduta. Inserisci di nuovo la password."
     },
     "abort": {
       "already_configured": "DiyHome è già configurato.",
-      "no_uid": "Device trovato ma UID mancante. Aggiorna il firmware e riprova."
+      "no_uid": "Device trovato ma UID mancante. Aggiorna il firmware e riprova.",
+      "reauth_successful": "Accesso aggiornato correttamente.",
+      "unknown": "Errore imprevisto. Controlla i log di Home Assistant."
     },
     "create_entry": {
       "default": "DiyHome connesso con successo. I tuoi dispositivi sono ora disponibili in Home Assistant."

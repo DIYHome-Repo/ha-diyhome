@@ -173,10 +173,89 @@ class DiyHomeValveSwitch(DiyHomeEntity, SwitchEntity):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Anteprima ottimistica limitata (zone e pompa)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _OptimisticCommandMixin:
+    """Stesse regole dell'anteprima della valvola (INT-004), per zone e pompa.
+
+    L'anteprima mostra subito il comando appena inviato, ma non sopravvive a un
+    comando fallito o rifiutato e scade dopo _OPTIMISTIC_TIMEOUT_S se il device
+    non conferma: poi l'entità torna a mostrare lo stato riportato dal device.
+    """
+
+    _OPTIMISTIC_TIMEOUT_S = 15
+    _optimistic_is_on: bool | None = None
+    _optimistic_unsub = None
+
+    def _real_is_on(self) -> bool | None:  # pragma: no cover - sovrascritto
+        raise NotImplementedError
+
+    def _preview_label(self) -> str:  # pragma: no cover - sovrascritto
+        raise NotImplementedError
+
+    def _clear_optimistic(self) -> None:
+        if self._optimistic_unsub is not None:
+            self._optimistic_unsub()
+            self._optimistic_unsub = None
+        self._optimistic_is_on = None
+
+    @callback
+    def _expire_optimistic(self, _now) -> None:
+        self._optimistic_unsub = None
+        if self._optimistic_is_on is None:
+            return
+        _LOGGER.warning(
+            "DiyHome %s %s: comando non confermato entro %ss, "
+            "mostro lo stato riportato dal dispositivo",
+            self._uid, self._preview_label(), self._OPTIMISTIC_TIMEOUT_S,
+        )
+        self._optimistic_is_on = None
+        self.async_write_ha_state()
+
+    def _confirm_optimistic(self) -> None:
+        """Da chiamare a ogni aggiornamento del coordinator."""
+        if self._optimistic_is_on is None:
+            return
+        real_is_on = self._real_is_on()
+        if real_is_on is not None and real_is_on == self._optimistic_is_on:
+            self._clear_optimistic()
+
+    async def _async_command(
+        self, target: bool, action: str, params: dict | None = None
+    ) -> None:
+        self._clear_optimistic()
+        self._optimistic_is_on = target
+        self._optimistic_unsub = async_call_later(
+            self.hass, self._OPTIMISTIC_TIMEOUT_S, self._expire_optimistic
+        )
+        self.async_write_ha_state()
+        try:
+            if params is None:
+                ok = await self._coordinator.async_send_command(self._uid, action)
+            else:
+                ok = await self._coordinator.async_send_command(
+                    self._uid, action, params
+                )
+        except Exception:
+            self._clear_optimistic()
+            self.async_write_ha_state()
+            raise
+        if ok is False:
+            self._clear_optimistic()
+            self.async_write_ha_state()
+            raise HomeAssistantError(f"DiyHome: comando {action} non accettato")
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._clear_optimistic()
+        await super().async_will_remove_from_hass()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Zone irrigazione
 # ─────────────────────────────────────────────────────────────────────────────
 
-class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
+class DiyHomeZoneSwitch(_OptimisticCommandMixin, DiyHomeEntity, SwitchEntity):
     """Zona irrigazione."""
 
     _attr_icon = "mdi:sprinkler-variant"
@@ -194,6 +273,7 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         self._zone_name = zone_name
         self._attr_unique_id = f"{uid}_zone_{zone_index}"
         self._optimistic_is_on: bool | None = None
+        self._optimistic_unsub = None
 
     @property
     def name(self) -> str:
@@ -216,11 +296,14 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
     def available(self) -> bool:
         return super().available and self._device_data.get("online", False)
 
+    def _real_is_on(self) -> bool | None:
+        return self._get_zone().get("is_active")
+
+    def _preview_label(self) -> str:
+        return f"zona {self._zone_index}"
+
     def _handle_coordinator_update(self) -> None:
-        if self._optimistic_is_on is not None:
-            real_is_on = self._get_zone().get("is_active")
-            if real_is_on is not None and real_is_on == self._optimistic_is_on:
-                self._optimistic_is_on = None
+        self._confirm_optimistic()
         super()._handle_coordinator_update()
 
     @property
@@ -237,17 +320,13 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
         return attrs
 
     async def async_turn_on(self, **kwargs) -> None:
-        self._optimistic_is_on = True
-        self.async_write_ha_state()
-        await self._coordinator.async_send_command(
-            self._uid, "zone_open", {"zone_index": self._zone_index}
+        await self._async_command(
+            True, "zone_open", {"zone_index": self._zone_index}
         )
 
     async def async_turn_off(self, **kwargs) -> None:
-        self._optimistic_is_on = False
-        self.async_write_ha_state()
-        await self._coordinator.async_send_command(
-            self._uid, "zone_close", {"zone_index": self._zone_index}
+        await self._async_command(
+            False, "zone_close", {"zone_index": self._zone_index}
         )
 
 
@@ -255,7 +334,7 @@ class DiyHomeZoneSwitch(DiyHomeEntity, SwitchEntity):
 # Pompa
 # ─────────────────────────────────────────────────────────────────────────────
 
-class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
+class DiyHomePumpSwitch(_OptimisticCommandMixin, DiyHomeEntity, SwitchEntity):
     """Abilita/disabilita pompa (AUTO_ENABLE ↔ FORCED_DISABLED)."""
 
     _attr_translation_key = "pump_enabled"
@@ -266,6 +345,7 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
         self._coordinator = coordinator
         self._attr_unique_id = f"{uid}_pump_enabled"
         self._optimistic_is_on: bool | None = None
+        self._optimistic_unsub = None
 
     @property
     def is_on(self) -> bool | None:
@@ -287,16 +367,17 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
             and pump.get("mode") not in ("SERVICE_MODE", "PUMP_LOCKED")
         )
 
+    def _real_is_on(self) -> bool | None:
+        pump = self._device_data.get("pump")
+        if isinstance(pump, dict) and pump.get("mode") is not None:
+            return pump.get("mode") == "AUTO_ENABLE"
+        return None
+
+    def _preview_label(self) -> str:
+        return "pompa"
+
     def _handle_coordinator_update(self) -> None:
-        if self._optimistic_is_on is not None:
-            pump = self._device_data.get("pump")
-            real_is_on = (
-                (pump.get("mode") == "AUTO_ENABLE")
-                if isinstance(pump, dict) and pump.get("mode") is not None
-                else None
-            )
-            if real_is_on is not None and real_is_on == self._optimistic_is_on:
-                self._optimistic_is_on = None
+        self._confirm_optimistic()
         super()._handle_coordinator_update()
 
     @property
@@ -310,11 +391,7 @@ class DiyHomePumpSwitch(DiyHomeEntity, SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs) -> None:
-        self._optimistic_is_on = True
-        self.async_write_ha_state()
-        await self._coordinator.async_send_command(self._uid, "pump_enable")
+        await self._async_command(True, "pump_enable")
 
     async def async_turn_off(self, **kwargs) -> None:
-        self._optimistic_is_on = False
-        self.async_write_ha_state()
-        await self._coordinator.async_send_command(self._uid, "pump_disable")
+        await self._async_command(False, "pump_disable")

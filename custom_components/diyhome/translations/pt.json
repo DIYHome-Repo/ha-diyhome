@@ -17,17 +17,35 @@
           "email": "E-mail",
           "password": "Palavra-passe"
         }
+      },
+      "two_factor": {
+        "title": "Código de verificação",
+        "description": "A sua conta usa a verificação em dois passos. Introduza o código de 6 dígitos da sua app de autenticação (ou um código de recuperação).",
+        "data": {
+          "code": "Código"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Inicie sessão novamente no DiyHome",
+        "description": "O acesso para {email} expirou ou foi revogado. Introduza a sua palavra-passe para voltar a ligar.",
+        "data": {
+          "password": "Palavra-passe"
+        }
       }
     },
     "error": {
       "invalid_auth": "E-mail ou palavra-passe incorretos.",
       "cannot_connect": "Não é possível ligar ao DiyHome. Verifique a sua ligação à internet.",
       "unknown": "Erro inesperado. Verifique os registos do Home Assistant.",
-      "no_uid": "Dispositivo encontrado mas UID em falta. Tente atualizar o firmware."
+      "no_uid": "Dispositivo encontrado mas UID em falta. Tente atualizar o firmware.",
+      "invalid_2fa": "Código de verificação incorreto.",
+      "auth_session_expired": "A verificação expirou. Introduza novamente a palavra-passe."
     },
     "abort": {
       "already_configured": "DiyHome já está configurado.",
-      "no_uid": "Dispositivo encontrado mas UID em falta. Atualize o firmware e tente novamente."
+      "no_uid": "Dispositivo encontrado mas UID em falta. Atualize o firmware e tente novamente.",
+      "reauth_successful": "Acesso atualizado com sucesso.",
+      "unknown": "Erro inesperado. Verifique os registos do Home Assistant."
     },
     "create_entry": {
       "default": "DiyHome ligado com sucesso. Os seus dispositivos estão agora disponíveis no Home Assistant."

@@ -61,13 +61,17 @@ Con questa integrazione puoi:
 
 ---
 
-## Configurazione OAuth2
+## Accesso all'account
 
-L'integrazione usa **OAuth2** per autenticarsi in modo sicuro con il tuo account DiyHome.
+La configurazione chiede **email e password** dell'account DiyHome (non apre il
+browser). Se l'account usa la verifica in due passaggi, al passo successivo
+chiede il codice a 6 cifre dell'app di autenticazione (o un codice di
+recupero). La password non viene salvata: Home Assistant conserva solo il token
+di accesso emesso dal cloud.
 
-Al momento dell'aggiunta dell'integrazione, Home Assistant aprirà il browser su [diyhome.cloud](https://diyhome.cloud) per completare l'autorizzazione. Nessuna password viene memorizzata localmente.
-
-> **Prima volta?** Assicurati di aver effettuato l'accesso su [diyhome.cloud](https://diyhome.cloud) prima di avviare la configurazione.
+Se il token viene revocato o scade, Home Assistant mostra **«Accedi di nuovo»**
+nella pagina dell'integrazione: basta reinserire la password (ed eventualmente
+il codice), senza rimuovere e riaggiungere l'integrazione.
 
 ---
 
@@ -115,3 +119,32 @@ a quella copia:
 Distribuzione: workflow `HACS Sync → PR su ha-diyhome` (confirm `SYNC-HACS`),
 revisione e merge della PR su `ha-diyhome`, poi `HACS Release Tag` con
 version `2.7.1` e confirm `RELEASE-HACS`. I workflow li avvia il proprietario.
+
+## Versione 2.7.2 — 23/11/2026
+
+Chiude i residui della revisione di sicurezza dell'integrazione:
+
+- **Zone e pompa** (INT-004): stessa regola della valvola. L'anteprima del
+  comando sparisce se il comando fallisce o viene rifiutato (errore visibile
+  in HA) e scade dopo 15 secondi senza conferma del dispositivo.
+- **Più WT-1 sullo stesso account** (INT-011): l'indirizzo LAN serve un solo
+  dispositivo, quello che risponde a quell'indirizzo. Gli altri restano
+  visibili e comandabili tramite cloud; prima sparivano o ricevevano lo stato
+  e i comandi del dispositivo LAN.
+- **Chiave LAN** (INT-019): il JWT LAN viene inviato solo all'host che risponde
+  con l'uid per cui è stato emesso. Un annuncio mDNS non cambia più in
+  silenzio l'indirizzo salvato; per cambiarlo si usa **Configura**, che ora
+  ha la precedenza sull'indirizzo trovato in automatico.
+- **Accesso** (INT-013): verifica in due passaggi supportata, nuovo accesso
+  guidato quando il token viene rifiutato, lista dispositivi letta nel
+  formato del server. Rimosso il rinnovo automatico del token, che il server
+  rifiutava sempre.
+
+Limiti noti: la LAN resta in HTTP senza TLS e lo stato LAN non è autenticato,
+quindi un host ostile in rete che dichiara lo stesso uid non viene escluso dal
+controllo (serve un intervento sul firmware). Con più WT-1 solo uno usa la LAN
+diretta.
+
+Distribuzione: come per la 2.7.1 (`HACS Sync` con confirm `SYNC-HACS`, merge
+della PR su `ha-diyhome`, `HACS Release Tag` con version `2.7.2` e confirm
+`RELEASE-HACS`). I workflow li avvia il proprietario.

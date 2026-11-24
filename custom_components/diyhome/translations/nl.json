@@ -17,17 +17,35 @@
           "email": "E-mail",
           "password": "Wachtwoord"
         }
+      },
+      "two_factor": {
+        "title": "Verificatiecode",
+        "description": "Je account gebruikt verificatie in twee stappen. Voer de 6-cijferige code uit je authenticator-app (of een herstelcode) in.",
+        "data": {
+          "code": "Code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opnieuw aanmelden bij DiyHome",
+        "description": "De toegang voor {email} is verlopen of ingetrokken. Voer je wachtwoord in om opnieuw te verbinden.",
+        "data": {
+          "password": "Wachtwoord"
+        }
       }
     },
     "error": {
       "invalid_auth": "Onjuist e-mailadres of wachtwoord.",
       "cannot_connect": "Kan geen verbinding maken met DiyHome. Controleer je internetverbinding.",
       "unknown": "Onverwachte fout. Controleer de Home Assistant-logboeken.",
-      "no_uid": "Apparaat gevonden maar UID ontbreekt. Probeer de firmware bij te werken."
+      "no_uid": "Apparaat gevonden maar UID ontbreekt. Probeer de firmware bij te werken.",
+      "invalid_2fa": "Onjuiste verificatiecode.",
+      "auth_session_expired": "De verificatie is verlopen. Voer je wachtwoord opnieuw in."
     },
     "abort": {
       "already_configured": "DiyHome is al geconfigureerd.",
-      "no_uid": "Apparaat gevonden maar UID ontbreekt. Werk de firmware bij en probeer opnieuw."
+      "no_uid": "Apparaat gevonden maar UID ontbreekt. Werk de firmware bij en probeer opnieuw.",
+      "reauth_successful": "Toegang succesvol bijgewerkt.",
+      "unknown": "Onverwachte fout. Controleer de Home Assistant-logboeken."
     },
     "create_entry": {
       "default": "DiyHome succesvol verbonden. Je apparaten zijn nu beschikbaar in Home Assistant."

@@ -146,8 +146,14 @@ class DiyHomeLanClient:
         self.mdns_hostname = mdns_hostname.strip() if mdns_hostname else ""
         self.session: aiohttp.ClientSession | None = None
         # Token JWT LAN (ES256) per autenticare i comandi HTTP al firmware
-        # Fetchato dal cloud dopo setup, rinnovato automaticamente
+        # Fetchato dal cloud dopo setup, rinnovato automaticamente.
+        # INT-011/INT-019: il token è legato a un solo device (claim `sub`):
+        # si ricorda per quale uid è stato emesso e si invia solo a quel device.
         self._lan_token: str = ""
+        self._lan_token_uid: str = ""
+        # uid riportato dall'ultimo /api/v1/ha/state letto da questo host:
+        # con più WT-1 solo questo device usa la LAN diretta, gli altri il cloud.
+        self.device_uid: str = ""
 
     @property
     def ip(self) -> str:
@@ -159,6 +165,14 @@ class DiyHomeLanClient:
 
     def is_available(self) -> bool:
         return bool(self.mdns_hostname)
+
+    def serves(self, uid: str) -> bool:
+        """True se l'host LAN configurato è il device `uid` (ultimo stato letto)."""
+        return bool(uid) and self.is_available() and uid == self.device_uid
+
+    def set_token(self, uid: str, token: str) -> None:
+        self._lan_token = token
+        self._lan_token_uid = uid if token else ""
 
     # ── JWT helpers ───────────────────────────────────────────────────────────
 
@@ -179,14 +193,16 @@ class DiyHomeLanClient:
         except Exception:
             return 0.0
 
-    def needs_renewal(self) -> bool:
-        """True se il JWT LAN manca o scade entro le prossime 24 ore.
+    def needs_renewal(self, uid: str = "") -> bool:
+        """True se il JWT LAN manca, è di un altro device o scade entro 24 ore.
 
         Chiamato in `async_send_command` prima di ogni comando LAN per
         rinnovare preventivamente il token — senza aspettare il 401 del
         firmware che causerebbe il fallback cloud silenzioso.
         """
         if not self._lan_token:
+            return True
+        if uid and uid != self._lan_token_uid:
             return True
         exp = self._jwt_expires_at(self._lan_token)
         if exp <= 0:
@@ -202,7 +218,10 @@ class DiyHomeLanClient:
             timeout=aiohttp.ClientTimeout(total=LAN_CONNECT_TIMEOUT),
         ) as resp:
             resp.raise_for_status()
-            return await resp.json()
+            raw = await resp.json()
+        if isinstance(raw, dict) and raw.get("uid"):
+            self.device_uid = str(raw["uid"])
+        return raw
 
     async def get_all_states(self) -> dict[str, dict] | None:
         """Scarica stato LAN e restituisce {uid: device_dict}."""
@@ -219,13 +238,33 @@ class DiyHomeLanClient:
             _LOGGER.debug("DiyHome LAN get_all_states: %s", err)
             return None
 
-    async def send_command(self, action: str, payload: dict | None = None) -> bool:
+    async def send_command(
+        self, action: str, payload: dict | None = None, uid: str = ""
+    ) -> bool:
         """POST /api/v1/command — zero latenza, zero cloud.
 
         Mappa automaticamente i comandi HA (valve_open/close) ai nomi firmware
         nativi (valve_toggle+isOpen) e aggiunge il token JWT LAN per l'auth.
+
+        INT-011/INT-019: prima di inviare il comando (e il JWT) verifica che
+        l'host risponda come il device `uid`; il JWT si invia solo se è stato
+        emesso per quell'uid. Altrimenti False → il chiamante passa dal cloud.
+        Limite: lo stato LAN non è autenticato, quindi un host ostile che
+        dichiara lo stesso uid non viene escluso da questo controllo.
         """
-        if not self.mdns_hostname or not self.session:
+        if not self.mdns_hostname or not self.session or not uid:
+            return False
+        try:
+            state = await self.get_ha_state()
+        except Exception as err:
+            _LOGGER.debug("DiyHome LAN identità non verificata: %s", err)
+            return False
+        if not isinstance(state, dict) or state.get("uid") != uid:
+            _LOGGER.warning(
+                "DiyHome LAN: l'host %s non risponde come il device %s, "
+                "comando inviato dal cloud",
+                self.mdns_hostname, uid,
+            )
             return False
         # Mappa al formato nativo firmware
         mapped_action, mapped_payload = _map_lan_command(action, payload)
@@ -235,7 +274,7 @@ class DiyHomeLanClient:
         }
         body.update(mapped_payload)
         headers: dict = {}
-        if self._lan_token:
+        if self._lan_token and self._lan_token_uid == uid:
             headers["Authorization"] = f"Bearer {self._lan_token}"
         try:
             async with self.session.post(

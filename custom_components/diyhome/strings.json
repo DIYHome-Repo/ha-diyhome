@@ -16,17 +16,35 @@
           "email": "Email",
           "password": "Password"
         }
+      },
+      "two_factor": {
+        "title": "Verification code",
+        "description": "Your account uses two-step verification. Enter the 6-digit code from your authenticator app (or a recovery code).",
+        "data": {
+          "code": "Code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to DiyHome again",
+        "description": "Access for {email} has expired or was revoked. Enter your password to reconnect.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
       "invalid_auth": "Incorrect email or password.",
       "cannot_connect": "Unable to connect to DiyHome. Check your internet connection.",
       "unknown": "Unexpected error. Check Home Assistant logs.",
-      "no_uid": "Device found but UID missing. Try updating the firmware."
+      "no_uid": "Device found but UID missing. Try updating the firmware.",
+      "invalid_2fa": "Incorrect verification code.",
+      "auth_session_expired": "The verification expired. Enter your password again."
     },
     "abort": {
       "already_configured": "DiyHome is already configured.",
-      "no_uid": "Device found but UID missing. Update the firmware and try again."
+      "no_uid": "Device found but UID missing. Update the firmware and try again.",
+      "reauth_successful": "Access updated successfully.",
+      "unknown": "Unexpected error. Check Home Assistant logs."
     },
     "create_entry": {
       "default": "DiyHome connected successfully. Your devices are now available in Home Assistant."

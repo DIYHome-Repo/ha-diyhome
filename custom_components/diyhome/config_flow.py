@@ -45,6 +45,152 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._entry_data: dict = {}
         self._discovered_hostname: str = ""
+        # INT-013: stato del login a due passaggi (account con 2FA attiva)
+        self._email: str = ""
+        self._pending_token: str = ""
+        self._after_login: str = ""  # "user" | "zeroconf" | "reauth"
+        self._reauth_entry: config_entries.ConfigEntry | None = None
+
+    # ── Login cloud (password, poi eventuale codice 2FA) ──────────────────────
+
+    async def _async_login(self, email: str, password: str) -> tuple[dict | None, str | None]:
+        """POST /api/ha/login.
+
+        Ritorna (token, None) se riuscito, (None, "2fa") se l'account chiede il
+        codice di verifica (HTTP 202 con pendingToken), (None, errore) altrimenti.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{CLOUD_URL}/api/ha/login",
+                    json={"email": email, "password": password},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.json(), None
+                    if resp.status == 202:
+                        body = await resp.json()
+                        if body.get("requires2fa") and body.get("pendingToken"):
+                            self._pending_token = str(body["pendingToken"])
+                            return None, "2fa"
+                        return None, "cannot_connect"
+                    if resp.status in (401, 403):
+                        return None, "invalid_auth"
+                    return None, "cannot_connect"
+        except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError):
+            return None, "cannot_connect"
+        except Exception as err:
+            _LOGGER.exception("DiyHome login error: %s", err)
+            return None, "unknown"
+
+    async def _async_login_2fa(self, code: str) -> tuple[dict | None, str | None]:
+        """POST /api/ha/login/2fa con il pendingToken del primo passaggio."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{CLOUD_URL}/api/ha/login/2fa",
+                    json={"pendingToken": self._pending_token, "code": code},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        self._pending_token = ""
+                        return await resp.json(), None
+                    if resp.status == 401:
+                        body = await resp.json(content_type=None)
+                        if (body or {}).get("error") == "invalid_2fa":
+                            return None, "invalid_2fa"
+                        # sfida scaduta o non più valida: si riparte dalla password
+                        self._pending_token = ""
+                        return None, "auth_session_expired"
+                    if resp.status == 403:
+                        return None, "invalid_auth"
+                    return None, "cannot_connect"
+        except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError):
+            return None, "cannot_connect"
+        except Exception as err:
+            _LOGGER.exception("DiyHome 2FA error: %s", err)
+            return None, "unknown"
+
+    async def _async_finish_login(self, data: dict) -> config_entries.ConfigFlowResult:
+        """Completa il flusso giusto dopo un login riuscito (con o senza 2FA)."""
+        if self._after_login == "reauth":
+            return await self._async_finish_reauth(data)
+        if self._after_login == "zeroconf":
+            return self._async_create_zeroconf_entry(data)
+        return await self._async_create_user_entry(data)
+
+    async def async_step_two_factor(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Secondo passaggio per gli account con verifica in due passaggi."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data, error = await self._async_login_2fa(str(user_input["code"]).strip())
+            if data is not None:
+                return await self._async_finish_login(data)
+            if error == "auth_session_expired":
+                # torna al passaggio con la password
+                return await getattr(self, f"async_step_{self._password_step()}")(
+                    None, error="auth_session_expired"
+                )
+            errors["base"] = error or "unknown"
+        return self.async_show_form(
+            step_id="two_factor",
+            data_schema=vol.Schema({vol.Required("code"): str}),
+            errors=errors,
+        )
+
+    def _password_step(self) -> str:
+        return {
+            "reauth": "reauth_confirm",
+            "zeroconf": "zeroconf_confirm",
+        }.get(self._after_login, "user")
+
+    # ── Reauth (token revocato o scaduto) ─────────────────────────────────────
+
+    async def async_step_reauth(
+        self, entry_data: dict
+    ) -> config_entries.ConfigFlowResult:
+        """Avviato da HA quando il cloud rifiuta il token (ConfigEntryAuthFailed)."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        self._email = str(entry_data.get("email", ""))
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict | None = None, error: str | None = None
+    ) -> config_entries.ConfigFlowResult:
+        errors: dict[str, str] = {"base": error} if error else {}
+        if user_input is not None:
+            self._after_login = "reauth"
+            data, err = await self._async_login(self._email, user_input[CONF_PASSWORD])
+            if data is not None:
+                return await self._async_finish_reauth(data)
+            if err == "2fa":
+                return await self.async_step_two_factor()
+            errors["base"] = err or "unknown"
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            description_placeholders={"email": self._email},
+            errors=errors,
+        )
+
+    async def _async_finish_reauth(self, data: dict) -> config_entries.ConfigFlowResult:
+        entry = self._reauth_entry
+        if entry is None:
+            return self.async_abort(reason="unknown")
+        self.hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                "access_token": data["access_token"],
+                "refresh_token": data.get("refresh_token", ""),
+            },
+        )
+        await self.hass.config_entries.async_reload(entry.entry_id)
+        return self.async_abort(reason="reauth_successful")
 
     # ── Zeroconf auto-discovery ───────────────────────────────────────────────
 
@@ -59,51 +205,35 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_uid")
 
         await self.async_set_unique_id(uid)
-        self._abort_if_unique_id_configured(
-            updates={CONF_MDNS_HOSTNAME: hostname}
-        )
+        # INT-019: l'annuncio mDNS non è autenticato (chiunque in LAN può
+        # dichiarare l'uid di un WT-1): non cambia più in silenzio l'indirizzo
+        # salvato, a cui l'integrazione invia il JWT LAN. Per cambiarlo:
+        # Impostazioni → Configura.
+        self._abort_if_unique_id_configured()
+        # INT-013: un'entry copre già tutti i device dell'account; un secondo
+        # WT-1 scoperto via zeroconf non deve creare una seconda entry.
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
 
         self._discovered_hostname = hostname
         self.context["title_placeholders"] = {"name": f"DIYHome ({hostname})"}
         return await self.async_step_zeroconf_confirm()
 
     async def async_step_zeroconf_confirm(
-        self, user_input: dict | None = None
+        self, user_input: dict | None = None, error: str | None = None
     ) -> config_entries.ConfigFlowResult:
         """Conferma discovery zeroconf: chiede solo email+password."""
-        errors: dict[str, str] = {}
+        errors: dict[str, str] = {"base": error} if error else {}
 
         if user_input is not None:
-            email: str = user_input[CONF_EMAIL].strip().lower()
-            password: str = user_input[CONF_PASSWORD]
-
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{CLOUD_URL}/api/ha/login",
-                        json={"email": email, "password": password},
-                        timeout=aiohttp.ClientTimeout(total=15),
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            return self.async_create_entry(
-                                title=f"DIYHome ({self._discovered_hostname})",
-                                data={
-                                    "access_token": data["access_token"],
-                                    "refresh_token": data.get("refresh_token", ""),
-                                    "email": email,
-                                    CONF_MDNS_HOSTNAME: self._discovered_hostname,
-                                },
-                            )
-                        if resp.status in (401, 403):
-                            errors["base"] = "invalid_auth"
-                        else:
-                            errors["base"] = "cannot_connect"
-            except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError):
-                errors["base"] = "cannot_connect"
-            except Exception as err:
-                _LOGGER.exception("DiyHome login error: %s", err)
-                errors["base"] = "unknown"
+            self._email = user_input[CONF_EMAIL].strip().lower()
+            self._after_login = "zeroconf"
+            data, err = await self._async_login(self._email, user_input[CONF_PASSWORD])
+            if data is not None:
+                return self._async_create_zeroconf_entry(data)
+            if err == "2fa":
+                return await self.async_step_two_factor()
+            errors["base"] = err or "unknown"
 
         return self.async_show_form(
             step_id="zeroconf_confirm",
@@ -115,14 +245,25 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    def _async_create_zeroconf_entry(self, data: dict) -> config_entries.ConfigFlowResult:
+        return self.async_create_entry(
+            title=f"DIYHome ({self._discovered_hostname})",
+            data={
+                "access_token": data["access_token"],
+                "refresh_token": data.get("refresh_token", ""),
+                "email": self._email,
+                CONF_MDNS_HOSTNAME: self._discovered_hostname,
+            },
+        )
+
     # ── Setup manuale — solo email + password ─────────────────────────────────
 
     async def async_step_user(
-        self, user_input: dict | None = None
+        self, user_input: dict | None = None, error: str | None = None
     ) -> config_entries.ConfigFlowResult:
         """Setup manuale: email + password → il sistema trova il device in automatico.
 
-        Dopo il login il sistema:
+        Dopo il login (e l'eventuale codice 2FA) il sistema:
         1. Recupera la lista device dall'account cloud
         2. Scansiona la LAN via zeroconf per 5s
         3. Abbina il device per UID → salva hostname .local automaticamente
@@ -132,89 +273,63 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
 
-        errors: dict[str, str] = {}
+        errors: dict[str, str] = {"base": error} if error else {}
 
         if user_input is not None:
-            email: str = user_input[CONF_EMAIL].strip().lower()
-            password: str = user_input[CONF_PASSWORD]
-
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{CLOUD_URL}/api/ha/login",
-                        json={"email": email, "password": password},
-                        timeout=aiohttp.ClientTimeout(total=15),
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            access_token = data["access_token"]
-
-                            # ── Recupera UIDs device dal cloud ───────────────
-                            device_uids = await self._fetch_device_uids(
-                                session, access_token
-                            )
-
-                            # ── Scan zeroconf automatico (max 5s) ────────────
-                            # Cerca _diyhome._tcp.local. sulla LAN e abbina
-                            # per UID con i device dell'account. Zero input utente.
-                            mdns_hostname = ""
-                            if device_uids:
-                                mdns_hostname = await self._scan_zeroconf_for_device(
-                                    set(device_uids)
-                                )
-                                if mdns_hostname:
-                                    _LOGGER.info(
-                                        "DiyHome: device trovato automaticamente "
-                                        "sulla LAN → %s",
-                                        mdns_hostname,
-                                    )
-                                else:
-                                    _LOGGER.info(
-                                        "DiyHome: device non trovato sulla LAN — "
-                                        "modalità cloud attiva. Puoi aggiungere "
-                                        "l'hostname in Impostazioni → Configura."
-                                    )
-
-                            # ── Imposta unique_id dal primo device ───────────
-                            first_uid = device_uids[0] if device_uids else ""
-                            if first_uid:
-                                await self.async_set_unique_id(first_uid)
-                                self._abort_if_unique_id_configured(
-                                    updates={CONF_MDNS_HOSTNAME: mdns_hostname}
-                                    if mdns_hostname
-                                    else {}
-                                )
-
-                            title = (
-                                f"DIYHome ({mdns_hostname})"
-                                if mdns_hostname
-                                else email
-                            )
-                            return self.async_create_entry(
-                                title=title,
-                                data={
-                                    "access_token": access_token,
-                                    "refresh_token": data.get("refresh_token", ""),
-                                    "email": email,
-                                    CONF_MDNS_HOSTNAME: mdns_hostname,
-                                },
-                            )
-
-                        if resp.status in (401, 403):
-                            errors["base"] = "invalid_auth"
-                        else:
-                            errors["base"] = "cannot_connect"
-
-            except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError):
-                errors["base"] = "cannot_connect"
-            except Exception as err:
-                _LOGGER.exception("DiyHome setup error: %s", err)
-                errors["base"] = "unknown"
+            self._email = user_input[CONF_EMAIL].strip().lower()
+            self._after_login = "user"
+            data, err = await self._async_login(self._email, user_input[CONF_PASSWORD])
+            if data is not None:
+                return await self._async_create_user_entry(data)
+            if err == "2fa":
+                return await self.async_step_two_factor()
+            errors["base"] = err or "unknown"
 
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_SCHEMA,
             errors=errors,
+        )
+
+    async def _async_create_user_entry(self, data: dict) -> config_entries.ConfigFlowResult:
+        access_token = data["access_token"]
+
+        # ── Recupera UIDs device dal cloud ───────────────────────────────────
+        async with aiohttp.ClientSession() as session:
+            device_uids = await self._fetch_device_uids(session, access_token)
+
+        # ── Scan zeroconf automatico (max 5s) ────────────────────────────────
+        # Cerca _diyhome._tcp.local. sulla LAN e abbina per UID con i device
+        # dell'account. Zero input utente.
+        mdns_hostname = ""
+        if device_uids:
+            mdns_hostname = await self._scan_zeroconf_for_device(set(device_uids))
+            if mdns_hostname:
+                _LOGGER.info(
+                    "DiyHome: device trovato automaticamente sulla LAN → %s",
+                    mdns_hostname,
+                )
+            else:
+                _LOGGER.info(
+                    "DiyHome: device non trovato sulla LAN — modalità cloud "
+                    "attiva. Puoi aggiungere l'hostname in Impostazioni → Configura."
+                )
+
+        # ── Imposta unique_id dal primo device ───────────────────────────────
+        first_uid = device_uids[0] if device_uids else ""
+        if first_uid:
+            await self.async_set_unique_id(first_uid)
+            self._abort_if_unique_id_configured()
+
+        title = f"DIYHome ({mdns_hostname})" if mdns_hostname else self._email
+        return self.async_create_entry(
+            title=title,
+            data={
+                "access_token": access_token,
+                "refresh_token": data.get("refresh_token", ""),
+                "email": self._email,
+                CONF_MDNS_HOSTNAME: mdns_hostname,
+            },
         )
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -230,12 +345,15 @@ class DiyHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status == 200:
-                    devices = await resp.json()
+                    body = await resp.json()
+                    # INT-013: il server risponde {devices: [...]}; si accetta
+                    # anche la lista semplice per compatibilità.
+                    devices = body.get("devices") if isinstance(body, dict) else body
                     if isinstance(devices, list):
                         return [
                             str(d["uid"])
                             for d in devices
-                            if d.get("uid")
+                            if isinstance(d, dict) and d.get("uid")
                         ]
         except Exception:
             pass
