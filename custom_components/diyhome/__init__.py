@@ -347,9 +347,61 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             state = await asyncio.wait_for(
                 self.lan_client.get_ha_state(), timeout=LAN_CONNECT_TIMEOUT
             )
-            return isinstance(state, dict) and bool(state)
+            if not isinstance(state, dict) or not state:
+                return False
+            # INT-011: l'host LAN deve essere un device dell'account.
+            return not self.data or state.get("uid") in self.data
         except Exception:
             return False
+
+    # ── Più device: LAN + cloud (INT-011) ───────────────────────────────────
+
+    def _merge_lan_states(self, states: dict | None) -> dict | None:
+        """Fonde lo stato LAN con gli altri device invece di sostituirli.
+
+        L'host LAN serve un solo WT-1: sostituire self.data con il suo stato
+        faceva sparire gli altri device dell'account. Gli uid LAN che non sono
+        nell'account (host cambiato, device di altri) vengono scartati.
+        """
+        if not states:
+            return None
+        current = dict(self.data or {})
+        if current:
+            states = {u: d for u, d in states.items() if u in current}
+            if not states:
+                return None
+        current.update(states)
+        return current
+
+    async def _fetch_cloud_devices(self) -> dict:
+        data = await self.client.get_devices()
+        return {
+            d["uid"]: _norm_cloud_state(d)
+            for d in data.get("devices", [])
+            if d.get("uid") and d.get("productTypeId", "wt1-v1") == "wt1-v1"
+        }
+
+    async def _with_cloud_devices(self, lan_states: dict) -> dict | None:
+        """Al setup LAN-first aggiunge gli altri device dell'account dal cloud.
+
+        Cloud irraggiungibile → solo il device LAN (funziona senza Internet).
+        Device LAN non presente nell'account → None (non lo si usa).
+        """
+        try:
+            cloud = await asyncio.wait_for(self._fetch_cloud_devices(), timeout=10)
+        except ConfigEntryAuthFailed:
+            raise
+        except Exception as err:
+            _LOGGER.debug("DiyHome: cloud non raggiungibile al setup LAN: %s", err)
+            return dict(lan_states)
+        own = {u: d for u, d in lan_states.items() if u in cloud}
+        if not own:
+            _LOGGER.warning(
+                "DiyHome: il device LAN %s non appartiene all'account, ignorato",
+                list(lan_states),
+            )
+            return None
+        return {**cloud, **own}
 
     # ── Attivazione modalità ──────────────────────────────────────────────────
 
@@ -501,7 +553,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                             )
                                             try:
                                                 full = await self.lan_client.get_ha_state()
-                                                if full:
+                                                if full and full.get("uid") == uid:
                                                     new_data = dict(self.data)
                                                     new_data[uid] = _norm_lan_state({**full, "uid": uid})
                                                     self._update_from_lan(new_data)
@@ -548,8 +600,9 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                 return
             try:
                 states = await self.lan_client.get_all_states()
-                if states:
-                    self._update_from_lan(states)
+                merged = self._merge_lan_states(states)
+                if merged:
+                    self._update_from_lan(merged)
             except asyncio.CancelledError:
                 return
             except Exception as err:
@@ -693,43 +746,6 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
 
         return ""
 
-    # ── Token refresh ─────────────────────────────────────────────────────────
-
-    async def _refresh_access_token(self) -> bool:
-        """Rinnova access_token usando il refresh_token salvato in entry.data.
-
-        Chiama POST /api/ha/oauth/token con grant_type=refresh_token.
-        Aggiorna entry.data con il nuovo access_token e refresh_token.
-        Ritorna True se il refresh è andato a buon fine.
-        """
-        refresh_token = self._entry.data.get("refresh_token")
-        if not refresh_token or not self._session:
-            return False
-        try:
-            async with self._session.post(
-                f"{CLOUD_URL}/api/ha/oauth/token",
-                json={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                },
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    _LOGGER.warning("DiyHome token refresh: HTTP %s", resp.status)
-                    return False
-                data = await resp.json()
-                new_access = data.get("access_token")
-                new_refresh = data.get("refresh_token", refresh_token)
-                if not new_access:
-                    return False
-                # Aggiorna entry.data (api.py legge access_token da entry.data ad ogni chiamata)
-                new_data = {**self._entry.data, "access_token": new_access, "refresh_token": new_refresh}
-                self.hass.config_entries.async_update_entry(self._entry, data=new_data)
-                return True
-        except Exception as err:
-            _LOGGER.debug("DiyHome token refresh errore: %s", err)
-            return False
-
     # ── Cloud SSE listener ────────────────────────────────────────────────────
 
     async def _listen_cloud_sse(self) -> None:
@@ -757,15 +773,18 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                     timeout=aiohttp.ClientTimeout(total=None, connect=15, sock_read=30),
                 ) as resp:
                     if resp.status in (401, 403):
-                        _LOGGER.debug("DiyHome cloud SSE: token scaduto (HTTP %s), tentativo refresh", resp.status)
-                        refreshed = await self._refresh_access_token()
-                        if refreshed:
-                            headers = {"Authorization": f"Bearer {self._entry.data.get('access_token', '')}"}
-                            _LOGGER.debug("DiyHome cloud SSE: token rinnovato, riconnessione")
-                        else:
-                            _LOGGER.warning("DiyHome cloud SSE: refresh token fallito, retry tra 60s")
-                            await asyncio.sleep(60)
-                        continue
+                        # INT-013: il refresh via /api/ha/oauth/token non può
+                        # funzionare (il server chiede client_id/client_secret,
+                        # che un'integrazione pubblica non può custodire).
+                        # Token revocato o scaduto → HA chiede di accedere di
+                        # nuovo (reauth, anche con 2FA) invece di ritentare
+                        # all'infinito con un token rifiutato.
+                        _LOGGER.warning(
+                            "DiyHome cloud SSE: token rifiutato (HTTP %s), "
+                            "serve un nuovo accesso", resp.status,
+                        )
+                        self._entry.async_start_reauth(self.hass)
+                        return
                     if resp.status != 200:
                         _LOGGER.debug("DiyHome cloud SSE: HTTP %s, retry 5s", resp.status)
                         await asyncio.sleep(5)
@@ -815,7 +834,10 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                     uid = payload.get("uid")
                                     if uid and self.data and uid in self.data:
                                         embedded = payload.get("state")
-                                        if self.lan_mode:
+                                        # INT-011: la conferma LAN vale solo per il
+                                        # device servito dall'host LAN; gli altri
+                                        # WT-1 dell'account restano sul cloud.
+                                        if self.lan_mode and self.lan_client.serves(uid):
                                             # FIX v2.3.4: in LAN mode l'anti-stale (age<2s) bloccava
                                             # TUTTI gli eventi cloud app→HA quando il firmware manda
                                             # LAN SSE periodicamente (sub-secondo) → _lan_last_update
@@ -837,7 +859,12 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                                                 await asyncio.sleep(0.4)
                                                 try:
                                                     full = await self.lan_client.get_ha_state()
-                                                    if full and self.data and uid in self.data:
+                                                    if (
+                                                        full
+                                                        and full.get("uid") == uid
+                                                        and self.data
+                                                        and uid in self.data
+                                                    ):
                                                         new_data = dict(self.data)
                                                         new_data[uid] = _norm_lan_state({**full, "uid": uid})
                                                         self._update_from_lan(new_data)
@@ -932,17 +959,19 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         try:
             if self.lan_mode:
                 states = await self.lan_client.get_all_states()
-                if states:
+                merged = self._merge_lan_states(states)
+                if merged:
                     # Aggiorna online states per log
-                    for uid, device in states.items():
+                    for uid, device in merged.items():
                         online = device.get("online", False)
                         was = self._online_states.get(uid)
                         if was is True and not online:
                             _LOGGER.warning("DiyHome %s andato offline", uid)
                         elif was is False and online:
                             _LOGGER.info("DiyHome %s tornato online", uid)
-                    self._online_states = {u: d.get("online", False) for u, d in states.items()}
-                    return states
+                    self._online_states = {u: d.get("online", False) for u, d in merged.items()}
+                    # INT-011: gli altri device restano (stato da cloud SSE).
+                    return merged
                 # LAN non risponde: torna cloud mode
                 _LOGGER.info("DiyHome: LAN watchdog fallita, switch cloud mode")
                 await self._activate_cloud_mode()
@@ -956,12 +985,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
                     pass
                 self._whoami_logged = True
 
-            data = await self.client.get_devices()
-            devices = {
-                d["uid"]: _norm_cloud_state(d)
-                for d in data.get("devices", [])
-                if d.get("uid") and d.get("productTypeId", "wt1-v1") == "wt1-v1"
-            }
+            devices = await self._fetch_cloud_devices()
             for uid, device in devices.items():
                 online = device.get("online", False)
                 was = self._online_states.get(uid)
@@ -990,7 +1014,7 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
             result = await self.client.get_lan_jwt(uid)
             token = result.get("token", "")
             if token:
-                self.lan_client._lan_token = token
+                self.lan_client.set_token(uid, token)
                 _LOGGER.debug("DiyHome: LAN JWT ottenuto per %s (exp=%s)", uid, result.get("expires_at"))
         except Exception as err:
             _LOGGER.debug("DiyHome: LAN JWT fetch fallito per %s: %s", uid, err)
@@ -1009,8 +1033,8 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         await asyncio.sleep(0.35)
         try:
             states = await self.lan_client.get_all_states()
-            if states and self.data:
-                new_data = {**self.data, **states}
+            new_data = self._merge_lan_states(states) if self.data else None
+            if new_data:
                 self._update_from_lan(new_data)
                 _LOGGER.debug("DiyHome: conferma LAN post-cmd uid=%s → ok", uid)
         except Exception as err:
@@ -1173,15 +1197,16 @@ class DiyHomeCoordinator(DataUpdateCoordinator):
         solo come sorgente di stato quando configurato.
         """
         # 1. LAN diretta (HTTP) — canale primario
-        if self.lan_mode and self.lan_client.is_available():
+        # INT-011: la LAN diretta vale solo per il device servito dall'host LAN.
+        if self.lan_mode and self.lan_client.serves(uid):
             # FIX C3: rinnova il JWT LAN se manca o scade entro 24h.
             # Senza questo, dopo 30gg il token scadeva → send_command restituiva
             # False silenziosamente → fallback cloud senza avvisare l'utente.
-            if self.lan_client.needs_renewal():
+            if self.lan_client.needs_renewal(uid):
                 _LOGGER.debug("DiyHome: JWT LAN in scadenza/assente → rinnovo per uid=%s", uid)
                 await self._fetch_lan_jwt(uid)
             try:
-                ok = await self.lan_client.send_command(action, payload or {})
+                ok = await self.lan_client.send_command(action, payload or {}, uid)
                 if ok:
                     # FIX I6: GET di conferma asincrono con delay 350ms
                     # (il firmware esegue comandi async — GET immediato dava stato vecchio)
@@ -1231,9 +1256,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Hostname mDNS — presente se device scoperto via zeroconf o config manuale
     # Es: "DIYHome_WT1_AABBCC.local" — stabile anche dopo riavvio router
+    # INT-019: l'indirizzo scelto dall'utente in "Configura" (options) vince
+    # su quello salvato automaticamente (zeroconf / IP cloud) in entry.data.
     mdns_hostname = (
-        entry.data.get(CONF_MDNS_HOSTNAME, "")
-        or entry.options.get(CONF_MDNS_HOSTNAME, "")
+        entry.options.get(CONF_MDNS_HOSTNAME, "")
+        or entry.data.get(CONF_MDNS_HOSTNAME, "")
     ).strip()
 
     lan_client = DiyHomeLanClient(mdns_hostname=mdns_hostname)
@@ -1252,8 +1279,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             states = await asyncio.wait_for(
                 lan_client.get_all_states(), timeout=LAN_CONNECT_TIMEOUT
             )
-            if states:
-                coordinator.async_set_updated_data(states)
+            # INT-011: anche gli altri WT-1 dell'account (dal cloud).
+            merged = await coordinator._with_cloud_devices(states) if states else None
+            if merged:
+                coordinator.async_set_updated_data(merged)
                 coordinator.lan_mode = True
                 _LOGGER.info("DiyHome: first refresh da LAN (%s)", mdns_hostname)
         except Exception:
@@ -1292,8 +1321,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 states = await asyncio.wait_for(
                     lan_client.get_all_states(), timeout=LAN_CONNECT_TIMEOUT
                 )
-                if states:
-                    coordinator.async_set_updated_data(states)
+                merged = coordinator._merge_lan_states(states)
+                if merged:
+                    coordinator.async_set_updated_data(merged)
                     coordinator.lan_mode = True
                     _LOGGER.info(
                         "DiyHome: LAN mode attiva via IP cloud (%s)", cloud_ip
@@ -1327,9 +1357,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # FIX P2: token LAN fetchato PRIMA di async_start(), così è disponibile
     # dal primo momento in cui il coordinator inizia ad accettare comandi LAN.
-    if mdns_hostname and coordinator.data:
-        for uid in list(coordinator.data.keys()):
-            await coordinator._fetch_lan_jwt(uid)
+    # INT-011: il JWT LAN è legato a un device (`sub`): si chiede solo per il
+    # device servito dall'host LAN, non per ogni uid (l'ultimo vinceva).
+    lan_uid = lan_client.device_uid
+    if mdns_hostname and coordinator.data and lan_uid in coordinator.data:
+        await coordinator._fetch_lan_jwt(lan_uid)
 
     # Avvia coordinator (SSE + watchdog + retry)
     # async_start() non ricrea la sessione se già esiste (FIX P1 cooperante)

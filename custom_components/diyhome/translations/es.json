@@ -17,17 +17,35 @@
           "email": "Correo electrónico",
           "password": "Contraseña"
         }
+      },
+      "two_factor": {
+        "title": "Código de verificación",
+        "description": "Tu cuenta usa la verificación en dos pasos. Introduce el código de 6 dígitos de tu app de autenticación (o un código de recuperación).",
+        "data": {
+          "code": "Código"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Inicia sesión de nuevo en DiyHome",
+        "description": "El acceso para {email} ha caducado o ha sido revocado. Introduce tu contraseña para volver a conectar.",
+        "data": {
+          "password": "Contraseña"
+        }
       }
     },
     "error": {
       "invalid_auth": "Correo electrónico o contraseña incorrectos.",
       "cannot_connect": "No se puede conectar a DiyHome. Comprueba tu conexión a internet.",
       "unknown": "Error inesperado. Consulta los registros de Home Assistant.",
-      "no_uid": "Dispositivo encontrado pero falta el UID. Intenta actualizar el firmware."
+      "no_uid": "Dispositivo encontrado pero falta el UID. Intenta actualizar el firmware.",
+      "invalid_2fa": "Código de verificación incorrecto.",
+      "auth_session_expired": "La verificación ha caducado. Introduce de nuevo la contraseña."
     },
     "abort": {
       "already_configured": "DiyHome ya está configurado.",
-      "no_uid": "Dispositivo encontrado pero falta el UID. Actualiza el firmware e inténtalo de nuevo."
+      "no_uid": "Dispositivo encontrado pero falta el UID. Actualiza el firmware e inténtalo de nuevo.",
+      "reauth_successful": "Acceso actualizado correctamente.",
+      "unknown": "Error inesperado. Consulta los registros de Home Assistant."
     },
     "create_entry": {
       "default": "DiyHome conectado correctamente. Tus dispositivos ya están disponibles en Home Assistant."

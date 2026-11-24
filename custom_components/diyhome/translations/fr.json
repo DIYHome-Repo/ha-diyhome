@@ -17,17 +17,35 @@
           "email": "E-mail",
           "password": "Mot de passe"
         }
+      },
+      "two_factor": {
+        "title": "Code de vérification",
+        "description": "Votre compte utilise la validation en deux étapes. Saisissez le code à 6 chiffres de votre application d'authentification (ou un code de récupération).",
+        "data": {
+          "code": "Code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnectez-vous à DiyHome",
+        "description": "L'accès pour {email} a expiré ou a été révoqué. Saisissez votre mot de passe pour vous reconnecter.",
+        "data": {
+          "password": "Mot de passe"
+        }
       }
     },
     "error": {
       "invalid_auth": "E-mail ou mot de passe incorrect.",
       "cannot_connect": "Impossible de se connecter à DiyHome. Vérifiez votre connexion.",
       "unknown": "Erreur inattendue. Consultez les journaux de Home Assistant.",
-      "no_uid": "Appareil trouvé mais UID manquant. Essayez de mettre à jour le firmware."
+      "no_uid": "Appareil trouvé mais UID manquant. Essayez de mettre à jour le firmware.",
+      "invalid_2fa": "Code de vérification incorrect.",
+      "auth_session_expired": "La vérification a expiré. Saisissez à nouveau votre mot de passe."
     },
     "abort": {
       "already_configured": "DiyHome est déjà configuré.",
-      "no_uid": "Appareil trouvé mais UID manquant. Mettez à jour le firmware et réessayez."
+      "no_uid": "Appareil trouvé mais UID manquant. Mettez à jour le firmware et réessayez.",
+      "reauth_successful": "Accès mis à jour avec succès.",
+      "unknown": "Erreur inattendue. Consultez les journaux de Home Assistant."
     },
     "create_entry": {
       "default": "DiyHome connecté avec succès. Vos appareils sont maintenant disponibles dans Home Assistant."

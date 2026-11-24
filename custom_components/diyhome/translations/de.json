@@ -17,17 +17,35 @@
           "email": "E-Mail",
           "password": "Passwort"
         }
+      },
+      "two_factor": {
+        "title": "Bestätigungscode",
+        "description": "Ihr Konto verwendet die Bestätigung in zwei Schritten. Geben Sie den 6-stelligen Code Ihrer Authenticator-App (oder einen Wiederherstellungscode) ein.",
+        "data": {
+          "code": "Code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Erneut bei DiyHome anmelden",
+        "description": "Der Zugang für {email} ist abgelaufen oder wurde widerrufen. Geben Sie Ihr Passwort ein, um die Verbindung wiederherzustellen.",
+        "data": {
+          "password": "Passwort"
+        }
       }
     },
     "error": {
       "invalid_auth": "Falsche E-Mail oder falsches Passwort.",
       "cannot_connect": "Verbindung zu DiyHome nicht möglich. Überprüfe deine Internetverbindung.",
       "unknown": "Unerwarteter Fehler. Überprüfe die Home Assistant Logs.",
-      "no_uid": "Gerät gefunden, aber UID fehlt. Versuche die Firmware zu aktualisieren."
+      "no_uid": "Gerät gefunden, aber UID fehlt. Versuche die Firmware zu aktualisieren.",
+      "invalid_2fa": "Falscher Bestätigungscode.",
+      "auth_session_expired": "Die Bestätigung ist abgelaufen. Geben Sie Ihr Passwort erneut ein."
     },
     "abort": {
       "already_configured": "DiyHome ist bereits konfiguriert.",
-      "no_uid": "Gerät gefunden, aber UID fehlt. Aktualisiere die Firmware und versuche es erneut."
+      "no_uid": "Gerät gefunden, aber UID fehlt. Aktualisiere die Firmware und versuche es erneut.",
+      "reauth_successful": "Zugang erfolgreich aktualisiert.",
+      "unknown": "Unerwarteter Fehler. Überprüfe die Home Assistant Logs."
     },
     "create_entry": {
       "default": "DiyHome erfolgreich verbunden. Deine Geräte sind jetzt in Home Assistant verfügbar."

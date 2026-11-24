@@ -17,17 +17,35 @@
           "email": "E-mail",
           "password": "Hasło"
         }
+      },
+      "two_factor": {
+        "title": "Kod weryfikacyjny",
+        "description": "Twoje konto używa weryfikacji dwuetapowej. Wpisz 6-cyfrowy kod z aplikacji uwierzytelniającej (lub kod odzyskiwania).",
+        "data": {
+          "code": "Kod"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Zaloguj się ponownie do DiyHome",
+        "description": "Dostęp dla {email} wygasł lub został cofnięty. Wpisz hasło, aby połączyć się ponownie.",
+        "data": {
+          "password": "Hasło"
+        }
       }
     },
     "error": {
       "invalid_auth": "Nieprawidłowy adres e-mail lub hasło.",
       "cannot_connect": "Nie można połączyć się z DiyHome. Sprawdź połączenie internetowe.",
       "unknown": "Nieoczekiwany błąd. Sprawdź dzienniki Home Assistant.",
-      "no_uid": "Urządzenie znalezione, ale brak UID. Spróbuj zaktualizować firmware."
+      "no_uid": "Urządzenie znalezione, ale brak UID. Spróbuj zaktualizować firmware.",
+      "invalid_2fa": "Nieprawidłowy kod weryfikacyjny.",
+      "auth_session_expired": "Weryfikacja wygasła. Wpisz ponownie hasło."
     },
     "abort": {
       "already_configured": "DiyHome jest już skonfigurowany.",
-      "no_uid": "Urządzenie znalezione, ale brak UID. Zaktualizuj firmware i spróbuj ponownie."
+      "no_uid": "Urządzenie znalezione, ale brak UID. Zaktualizuj firmware i spróbuj ponownie.",
+      "reauth_successful": "Dostęp zaktualizowany pomyślnie.",
+      "unknown": "Nieoczekiwany błąd. Sprawdź dzienniki Home Assistant."
     },
     "create_entry": {
       "default": "DiyHome połączony pomyślnie. Twoje urządzenia są teraz dostępne w Home Assistant."
